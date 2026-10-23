@@ -21,3 +21,17 @@ CREATE TABLE IF NOT EXISTS processed_updates (
   update_id INTEGER PRIMARY KEY,
   processed_at TEXT NOT NULL
 );
+ 
+-- Messages for the local Ollama bridge. Only the configured chat is enqueued.
+CREATE TABLE IF NOT EXISTS bridge_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  update_id INTEGER NOT NULL UNIQUE,
+  chat_id TEXT NOT NULL,
+  message_text TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bridge_queue_status_id
+  ON bridge_queue (status, id);
