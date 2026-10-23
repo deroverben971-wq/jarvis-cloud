@@ -27,7 +27,7 @@ Cloudflare Workers and D1 have free plans, but not unlimited service. Current pu
 1. Use your **existing Telegram JARVIS bot**. Do not create another bot. Save its token privately; never send it in chat or commit it to GitHub. Stop the currently running `jarvis.py` polling process before switching to webhook mode.
 2. Sign in to Cloudflare and open **Workers & Pages**.
 3. Create a D1 database named `jarvis-reminders`.
-4. In that D1 database, open **Console** and run the SQL in `cloud-phase2/schema.sql`.
+4. In that D1 database, open **Console** and run the SQL in `cloud-phase2/schema.sql`. If you created the database and ran the earlier version already, run the updated SQL again so the `bridge_queue` table is added; the statements are safe to rerun.
 5. Create a Worker named `jarvis-cloud-phase2`. Copy the contents of `cloud-phase2/src/index.js` into its editor and deploy.
 6. Open the Worker settings and add these **secrets** (do not put values in GitHub files):
    - `TELEGRAM_BOT_TOKEN`: your existing JARVIS bot token. The webhook replaces Telegram polling for that bot; local AI replies are handled by `local_bridge.py`.
@@ -36,7 +36,7 @@ Cloudflare Workers and D1 have free plans, but not unlimited service. Current pu
    - `JARVIS_BRIDGE_SECRET`: a second strong random secret, used only between your Windows bridge and Worker. Keep it private and set the same value as the `JARVIS_BRIDGE_SECRET` environment variable on Windows.
 7. Add a D1 binding in Worker settings: variable name `DB`, select the `jarvis-reminders` database.
 8. Add a Cron Trigger with expression `* * * * *` (every minute), then save/deploy. This checks reminders even when your PC is off.
-9. Copy `cloud-phase2/register-webhook.ps1` to your Windows computer. In PowerShell, run it from its folder with:
+9. Only after the Worker is deployed and configured, stop the old `jarvis.py` process. Copy `cloud-phase2/register-webhook.ps1` to your Windows computer. In PowerShell, run it from its folder with:
    `powershell -ExecutionPolicy Bypass -File .\register-webhook.ps1`
    It asks for your token and webhook secret using hidden input. Do not send either value to anyone or paste them into chat. Enter the Worker URL followed by `/telegram`, for example `https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/telegram`.
 10. Download `cloud-phase2/local_bridge.py` into `C:\Users\noeld\JARVIS\local_bridge.py` (the same folder as `jarvis_memory.db`). Open PowerShell and run these commands, replacing the Worker URL and bridge secret with your own values. Do not paste the secret into chat:
