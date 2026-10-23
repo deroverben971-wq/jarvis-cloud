@@ -227,7 +227,10 @@ export default {
           .bind(update.update_id, new Date().toISOString()).run();
         if (!seen.meta?.changes) return json({ ok: true, duplicate: true });
       }
-      if (update.message && update.message.text) {\n        if (isCloudReminderMessage(update.message)) await handleMessage(env, update.message);\n        else await enqueueForLocalJarvis(env, update.message, update.update_id);\n      }
+      if (update.message && update.message.text) {
+        if (isCloudReminderMessage(update.message)) await handleMessage(env, update.message);
+        else await enqueueForLocalJarvis(env, update.message, update.update_id);
+      }
       return json({ ok: true });
     } catch (error) {
       console.error("Update handling failed:", error?.message || "unknown error");
