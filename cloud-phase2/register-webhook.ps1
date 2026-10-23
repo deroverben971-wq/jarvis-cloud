@@ -1,7 +1,8 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "JARVIS Cloud Telegram webhook setup"
-$tokenSecure = Read-Host "Paste your Telegram bot token here (input is hidden)" -AsSecureString
+Write-Host "IMPORTANT: use the NEW Cloud Phase 2 bot token, not your local Windows/Ollama bot token."
+$tokenSecure = Read-Host "Paste the NEW Cloud Phase 2 Telegram bot token (input is hidden)" -AsSecureString
 $tokenPtr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($tokenSecure)
 try {
     $token = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($tokenPtr)
