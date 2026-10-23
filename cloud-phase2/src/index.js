@@ -98,6 +98,25 @@ async function showReminders(env, chatId, todayOnly = false) {
   await sendText(env, chatId, heading + "\n\n" + lines.join("\n\n"));
 }
 
+function isCloudReminderMessage(message) {
+  const raw = (message.text || "").trim();
+  const text = raw.toLowerCase();
+  return text === "/start" || text === "/help" || text === "help" ||
+    text === "/schedule" || text === "/reminders" || text.startsWith("/remind ") ||
+    text.startsWith("/cancel ") || text === "show my reminders" || text === "list reminders" ||
+    /what('?s| is) my schedule (for )?today\??/.test(text) ||
+    /what do i have today\??/.test(text);
+}
+
+async function enqueueForLocalJarvis(env, message, updateId) {
+  const chatId = String(message.chat?.id ?? "");
+  const body = (message.text || "").trim();
+  if (!chatId || chatId !== String(env.TELEGRAM_CHAT_ID) || !body) return;
+  await env.DB.prepare(
+    "INSERT INTO bridge_queue (update_id, chat_id, message_text, created_at, status) VALUES (?, ?, ?, ?, 'pending')"
+  ).bind(updateId, chatId, body.slice(0, 4000), new Date().toISOString()).run();
+}
+
 async function handleMessage(env, message) {
   const chatId = String(message.chat?.id ?? "");
   if (!chatId || chatId !== String(env.TELEGRAM_CHAT_ID)) return;
@@ -156,6 +175,36 @@ export default {
     if (request.method === "GET" && url.pathname === "/") {
       return new Response("JARVIS Cloud Phase 2 is online.", { status: 200 });
     }
+    if (request.method === "GET" && url.pathname === "/bridge/next") {
+      if (!env.JARVIS_BRIDGE_SECRET || request.headers.get("X-Jarvis-Bridge-Secret") !== env.JARVIS_BRIDGE_SECRET) {
+        return json({ ok: false, error: "Unauthorized" }, 401);
+      }
+      const row = await env.DB.prepare(
+        "SELECT id, chat_id, message_text FROM bridge_queue WHERE status = 'pending' ORDER BY id LIMIT 1"
+      ).first();
+      if (!row) return json({ ok: true, job: null });
+      const claimed = await env.DB.prepare(
+        "UPDATE bridge_queue SET status = 'processing', attempts = attempts + 1 WHERE id = ? AND status = 'pending'"
+      ).bind(row.id).run();
+      if (!claimed.meta?.changes) return json({ ok: true, job: null });
+      return json({ ok: true, job: { id: row.id, chat_id: row.chat_id, text: row.message_text } });
+    }
+    if (request.method === "POST" && url.pathname === "/bridge/reply") {
+      if (!env.JARVIS_BRIDGE_SECRET || request.headers.get("X-Jarvis-Bridge-Secret") !== env.JARVIS_BRIDGE_SECRET) {
+        return json({ ok: false, error: "Unauthorized" }, 401);
+      }
+      let body;
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      if (!Number.isSafeInteger(body.id) || body.id < 1 || typeof body.text !== "string") {
+        return json({ ok: false, error: "Invalid reply payload" }, 400);
+      }
+      const row = await env.DB.prepare("SELECT chat_id, status FROM bridge_queue WHERE id = ?").bind(body.id).first();
+      if (!row || row.status !== "processing") return json({ ok: false, error: "Job not found or not processing" }, 404);
+      await sendText(env, row.chat_id, body.text);
+      await env.DB.prepare("UPDATE bridge_queue SET status = 'done', completed_at = ? WHERE id = ?")
+        .bind(new Date().toISOString(), body.id).run();
+      return json({ ok: true });
+    }
     if (request.method !== "POST" || url.pathname !== "/telegram") {
       return json({ ok: false, error: "Not found" }, 404);
     }
@@ -178,7 +227,7 @@ export default {
           .bind(update.update_id, new Date().toISOString()).run();
         if (!seen.meta?.changes) return json({ ok: true, duplicate: true });
       }
-      if (update.message) await handleMessage(env, update.message);
+      if (update.message && update.message.text) {\n        if (isCloudReminderMessage(update.message)) await handleMessage(env, update.message);\n        else await enqueueForLocalJarvis(env, update.message, update.update_id);\n      }
       return json({ ok: true });
     } catch (error) {
       console.error("Update handling failed:", error?.message || "unknown error");
