@@ -42,9 +42,9 @@ Cloudflare Workers and D1 have free plans, but not unlimited service. Current pu
 10. Download `cloud-phase2/local_bridge.py` into `C:\Users\noeld\JARVIS\local_bridge.py` (the same folder as `jarvis_memory.db`). Open PowerShell and run these commands, replacing the Worker URL and bridge secret with your own values. Do not paste the secret into chat:
    ```powershell
    cd C:\Users\noeld\JARVIS
-   `$env:JARVIS_CLOUD_URL = "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev"
-   `$env:JARVIS_BRIDGE_SECRET = "YOUR_SAME_JARVIS_BRIDGE_SECRET"
-   `$env:JARVIS_MEMORY_DB = "C:\Users\noeld\JARVIS\jarvis_memory.db"
+   $env:JARVIS_CLOUD_URL = "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev"
+   $env:JARVIS_BRIDGE_SECRET = "YOUR_SAME_JARVIS_BRIDGE_SECRET"
+   $env:JARVIS_MEMORY_DB = "C:\Users\noeld\JARVIS\jarvis_memory.db"
    py .\local_bridge.py
    ```
    Keep this window open when you want local Ollama replies. The bridge uses your existing SQLite database; it does not delete it. Make sure Ollama is running.
