@@ -3,7 +3,6 @@ name: JARVIS Morning Briefing
 on:
   workflow_dispatch:
   schedule:
-    # 7:00 AM Philippines time (UTC+8) = 23:00 UTC on the previous day
     - cron: "0 23 * * *"
 
 permissions:
@@ -20,7 +19,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python - <<'PY'
-          import json, os, urllib.request
+          import json, os, urllib.error, urllib.request
           from datetime import datetime
           from zoneinfo import ZoneInfo
 
@@ -37,12 +36,20 @@ jobs:
               "✅ Cloud reminder workflow is running.\n"
               "ℹ️ This first version is a system check, not yet a calendar or AI-generated briefing."
           )
-          url = f"https://api.telegram.org/bot{token}/sendMessage"
+          url = "https://api.telegram.org/bot" + token + "/sendMessage"
           payload = json.dumps({"chat_id": chat_id, "text": text}).encode()
           request = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-          with urllib.request.urlopen(request, timeout=20) as response:
-              result = json.loads(response.read().decode())
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  result = json.loads(response.read().decode())
+          except urllib.error.HTTPError as error:
+              try:
+                  details = json.loads(error.read().decode())
+                  description = details.get("description", "No description")
+              except Exception:
+                  description = "Telegram returned an unreadable error response."
+              raise SystemExit(f"Telegram rejected the request (HTTP {error.code}): {description}")
           if not result.get("ok"):
-              raise SystemExit("Telegram API did not confirm message delivery.")
-          print("Morning briefing delivered to configured Telegram chat.")
+              raise SystemExit("Telegram did not confirm delivery.")
+          print("Morning briefing delivered.")
           PY
