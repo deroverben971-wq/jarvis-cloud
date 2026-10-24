@@ -1,0 +1,43 @@
+name: Validate JARVIS Cloud Phase 2
+
+on:
+  pull_request:
+    paths:
+      - "cloud-phase2/src/index.js"
+      - "cloud-phase2/schema.sql"
+      - ".github/workflows/validate-cloud-phase2.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "cloud-phase2/src/index.js"
+      - "cloud-phase2/schema.sql"
+      - ".github/workflows/validate-cloud-phase2.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check Worker JavaScript syntax
+        run: node --check cloud-phase2/src/index.js
+      - name: Validate D1 schema SQL with SQLite
+        run: |
+          python - <<'PY'
+          import sqlite3
+          from pathlib import Path
+
+          sql = Path("cloud-phase2/schema.sql").read_text(encoding="utf-8")
+          connection = sqlite3.connect(":memory:")
+          connection.executescript(sql)
+          connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+          print("D1 schema syntax passed.")
+          PY
