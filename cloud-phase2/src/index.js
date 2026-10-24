@@ -117,9 +117,9 @@ function isCloudCommand(message) {
   const text = (message.text || "").trim().toLowerCase();
   return text === "/start" || text === "/help" || text === "help" ||
     text === "/schedule" || text === "/reminders" ||
-    text.startsWith("/remind ") || text.startsWith("/cancel ") ||
+    text === "/remind" || text.startsWith("/remind ") || text === "/cancel" || text.startsWith("/cancel ") ||
     text.startsWith("/remember ") || text === "/remember" || text === "/memories" ||
-    text.startsWith("/forget ") || text === "/history" || text === "/forgetme" ||
+    text === "/forget" || text.startsWith("/forget ") || text === "/history" || text === "/forgetme" ||
     text === "show my reminders" || text === "list reminders" ||
     /what('?s| is) my schedule (for )?today\??/.test(text) ||
     /what do i have today\??/.test(text);
