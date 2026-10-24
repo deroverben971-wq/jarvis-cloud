@@ -35,3 +35,26 @@ CREATE TABLE IF NOT EXISTS bridge_queue (
 );
 CREATE INDEX IF NOT EXISTS idx_bridge_queue_status_id
   ON bridge_queue (status, id);
+
+-- Cloud-hosted AI chat history and long-term facts.
+-- These are separate from the existing local SQLite database on Windows.
+CREATE TABLE IF NOT EXISTS cloud_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cloud_messages_chat_id
+  ON cloud_messages (chat_id, id);
+
+CREATE TABLE IF NOT EXISTS cloud_facts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id TEXT NOT NULL,
+  fact TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cloud_facts_chat_id
+  ON cloud_facts (chat_id, id);
