@@ -1,60 +1,48 @@
-# JARVIS Cloud — Phase 2 (Telegram reminders)
+# JARVIS Cloud — Phase 2 (Cloud AI, reminders, and memory)
 
-This is a **single-Telegram-bot** setup. Cloudflare receives all messages through a webhook, handles reminders even while the PC is off, and queues ordinary chat messages for `local_bridge.py` to process with local Ollama and the existing SQLite memory database when the PC is online. The bridge does not use Telegram polling, so it can share the same bot identity. Your existing `jarvis.py` is preserved, but do not run its polling process at the same time as the webhook.
+This is a **single-Telegram-bot** setup. Telegram delivers messages to a Cloudflare Worker. With a Workers AI binding named `AI`, ordinary conversations run on Cloudflare so they can work while the Windows PC is off. Cloudflare D1 stores cloud conversation history and saved facts. Reminders are managed by the same Worker.
 
-## Features in this first version
+Your local `jarvis.py`, `local_bridge.py`, Ollama model, and SQLite file remain available as a backup/fallback. Do not run the old `jarvis.py` Telegram polling process while the webhook is active.
 
-- `/schedule` or “What's my schedule today?”
-- `/reminders` to list future reminders
-- `/remind YYYY-MM-DD HH:MM task` to create a reminder
-- `/cancel ID` to cancel a pending reminder
-- `/help`
-- Times are interpreted as Asia/Manila (UTC+8).
-- The bot only responds to the configured Telegram chat ID.
-- Telegram webhook requests must contain the configured webhook secret.
-- Update IDs are deduplicated.
-- Ordinary chat uses your local Ollama model through `local_bridge.py`; no paid AI API is used. When your PC is off, cloud reminders work, but local Ollama replies wait until the PC/bridge is online.
+## Features
+
+- Cloud AI chat using Workers AI model `@cf/zai-org/glm-4.7-flash` when the `AI` binding is enabled.
+- Cloud conversation history stored in D1; `/history` shows recent messages.
+- Saved cloud facts: `/remember fact`, `/memories`, and `/forget ID`.
+- `/forgetme` erases cloud conversation history and cloud facts for the configured chat. It does **not** erase the separate local SQLite database on Windows.
+- `/schedule` and “What's my schedule today?”
+- `/reminders`, `/remind YYYY-MM-DD HH:MM task`, and `/cancel ID`.
+- Reminder times use Asia/Manila (UTC+8).
+- The Worker only responds to the configured Telegram chat ID; webhook requests are protected by the Telegram webhook secret.
+- If the Workers AI binding is missing, normal chat is queued for the local Ollama bridge. If a cloud inference request fails, the message is queued for the local bridge as a fallback.
 
 ## Cost and limits
 
-Cloudflare Workers and D1 have free plans, but not unlimited service. Current published Workers Free limits include 100,000 requests/day and 10 ms CPU per invocation; D1 also has daily read/write limits. Limits and plan terms can change. This code is designed to be lightweight. Do not enable a paid plan if your requirement is strictly ₱0. If a limit is reached, requests or database operations may fail until the quota resets. See:
+Workers AI has a free allocation of **10,000 Neurons per day**. If the free allowance is exhausted, inference requests fail until the daily reset unless you choose a paid plan. Do not enable a paid plan if you require ₱0. Workers, D1, and AI have usage limits that can change. Check current official documentation:
+- https://developers.cloudflare.com/workers-ai/platform/pricing/
+- https://developers.cloudflare.com/workers-ai/configuration/bindings/
 - https://developers.cloudflare.com/workers/platform/limits/
-- https://developers.cloudflare.com/workers/platform/pricing/
 - https://developers.cloudflare.com/d1/
 
-## Deploy (one-time setup)
+## Deploy the cloud AI update to your existing setup
 
-1. Use your **existing Telegram JARVIS bot**. Do not create another bot. Save its token privately; never send it in chat or commit it to GitHub. Stop the currently running `jarvis.py` polling process before switching to webhook mode.
-2. Sign in to Cloudflare and open **Workers & Pages**.
-3. Create a D1 database named `jarvis-reminders`.
-4. In that D1 database, open **Console** and run the SQL in `cloud-phase2/schema.sql`. If you created the database and ran the earlier version already, run the updated SQL again so the `bridge_queue` table is added; the statements are safe to rerun.
-5. Create a Worker named `jarvis-cloud-phase2`. Copy the contents of `cloud-phase2/src/index.js` into its editor and deploy.
-6. Open the Worker settings and add these **secrets** (do not put values in GitHub files):
-   - `TELEGRAM_BOT_TOKEN`: your existing JARVIS bot token. The webhook replaces Telegram polling for that bot; local AI replies are handled by `local_bridge.py`.
-   - `TELEGRAM_CHAT_ID`: your private chat ID (text)
-   - `TELEGRAM_WEBHOOK_SECRET`: a newly created random value made only of letters, numbers, underscores, or hyphens, between 1 and 256 characters. Keep it private.
-   - `JARVIS_BRIDGE_SECRET`: a second strong random secret, used only between your Windows bridge and Worker. Keep it private and set the same value as the `JARVIS_BRIDGE_SECRET` environment variable on Windows.
-7. Add a D1 binding in Worker settings: variable name `DB`, select the `jarvis-reminders` database.
-8. Add a Cron Trigger with expression `* * * * *` (every minute), then save/deploy. This checks reminders even when your PC is off.
-9. Only after the Worker is deployed and configured, stop the old `jarvis.py` process. Copy `cloud-phase2/register-webhook.ps1` to your Windows computer. In PowerShell, run it from its folder with:
-   `powershell -ExecutionPolicy Bypass -File .\register-webhook.ps1`
-   It asks for your token and webhook secret using hidden input. Do not send either value to anyone or paste them into chat. Enter the Worker URL followed by `/telegram`, for example `https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/telegram`.
-10. Download `cloud-phase2/local_bridge.py` into `C:\Users\noeld\JARVIS\local_bridge.py` (the same folder as `jarvis_memory.db`). Open PowerShell and run these commands, replacing the Worker URL and bridge secret with your own values. Do not paste the secret into chat:
-   ```powershell
-   cd C:\Users\noeld\JARVIS
-   $env:JARVIS_CLOUD_URL = "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev"
-   $env:JARVIS_BRIDGE_SECRET = "YOUR_SAME_JARVIS_BRIDGE_SECRET"
-   $env:JARVIS_MEMORY_DB = "C:\Users\noeld\JARVIS\jarvis_memory.db"
-   py .\local_bridge.py
-   ```
-   Keep this window open when you want local Ollama replies. The bridge uses your existing SQLite database; it does not delete it. Make sure Ollama is running.
-11. Test `/help`, send a normal message to confirm local Ollama responds, then test `/remind YYYY-MM-DD HH:MM Test reminder` with a future Manila time, `/reminders`, `/schedule`, and `/cancel ID`.
+1. **Update the D1 schema.** Open Cloudflare Dashboard → Workers & Pages → D1 database `jarvis-reminders` → Console. Run the complete contents of `cloud-phase2/schema.sql`. These statements use `IF NOT EXISTS`, so the existing reminder and bridge tables are preserved while the two cloud-memory tables are added.
+2. **Update the Worker source.** Open Worker `jarvis-cloud-phase2` → Edit Code. Replace the Worker source with the contents of `cloud-phase2/src/index.js` from this repository branch after reviewing/merging the pull request, then save/deploy.
+3. **Add the Workers AI binding.** On the Worker's Settings/Bindings page, choose Add binding → Workers AI. Set the variable name to exactly `AI`. Save and deploy the Worker. The code uses `env.AI`.
+4. **Keep existing bindings and secrets.** Do not delete or rename D1 binding `DB` or the existing `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, or `JARVIS_BRIDGE_SECRET`. This code requires the same existing names and values.
+5. **Keep the existing Telegram webhook.** You do not need to register it again just to update Worker code or add the AI binding.
+6. **Test from Telegram.** Send `/help`, then a normal message such as “JARVIS, introduce yourself.” Try `/remember I prefer concise answers`, then `/memories`, then `/history`. Test reminders with a future Manila time.
+7. **PC-off test.** After the cloud AI binding and code are deployed and normal messages receive cloud AI answers, you can stop the local bridge and shut down the PC for a test. Cloud AI chats and reminders should continue. Local Ollama is no longer needed for normal replies when Workers AI is active.
+8. **Optional local fallback.** If Cloudflare AI is missing or temporarily unavailable, the Worker queues a fallback job for `local_bridge.py`. The bridge can only process that job while the PC, Ollama, and bridge are online.
 
-## Important
+## Cloud memory versus the old local memory
 
-- This repository's source code is public, so never commit tokens, webhook secrets, personal schedules, or reminder contents here. Actual reminder records live in D1.
-- The existing morning briefing workflow is unchanged.
-- Do not create or enable a paid Cloudflare plan for this project.
-- This uses one bot and one chat. Do not run the old `jarvis.py` polling process while the webhook is active; run `local_bridge.py` instead. The existing `jarvis.py` file and SQLite memory remain available as a backup.
-- A one-minute Cron Trigger is designed for reminders with about one-minute granularity, but cloud scheduling and network delivery are not guaranteed to arrive at the exact second.
-- This version handles reminders/schedule commands only. It does not expose the full local Ollama model in the cloud.
+Cloud memory starts separately. Existing facts and messages in `C:\Users\noeld\JARVIS\jarvis_memory.db` are **not automatically uploaded** to D1. Your local database is left untouched as a backup. Re-save any facts you want available to the cloud assistant with `/remember fact`. Do not upload your database to this public repository.
+
+## Security and reliability notes
+
+- Never commit Telegram tokens, webhook secrets, bridge secrets, conversation contents, or personal reminder data to GitHub.
+- Keep the existing morning-briefing workflow unchanged.
+- The webhook checks Telegram's configured secret and only acts on the configured chat ID.
+- D1 stores cloud chat history and saved facts until they are deleted with `/forgetme` or an individual fact is removed with `/forget ID`. Avoid saving passwords or other secrets as facts.
+- The one-minute Cron Trigger checks due reminders about once per minute; exact delivery time cannot be guaranteed.
