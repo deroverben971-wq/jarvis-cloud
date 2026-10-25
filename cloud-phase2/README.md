@@ -16,6 +16,10 @@ JARVIS receives Telegram messages through a Cloudflare Worker and uses Workers A
 - /cancel ID — cancel an active JARVIS reminder.
 - /remember fact, /memories, /forget ID, /history, /forgetme — manage cloud facts and chat history.
 
+## Before deploying this integration update
+
+After merging the integration update, run the complete contents of cloud-phase2/schema.sql in Cloudflare D1 Console before deploying the new Worker source. The schema uses CREATE TABLE IF NOT EXISTS, so it preserves existing reminders, chat history, facts, and bridge data while adding the optional phone-call metadata tables. Keep the existing Telegram webhook and all current secret values.
+
 ## Google Calendar connector (free)
 
 This connector uses the Advanced Google Calendar API from Google Apps Script and an event-only OAuth scope. Google documents explicit scope configuration at:
