@@ -8,6 +8,15 @@ const HELP = [
   "/reminders — list upcoming reminders",
   "/remind YYYY-MM-DD HH:MM task — add a reminder (Manila time)",
   "/cancel ID — cancel a reminder",
+  "/remindcall YYYY-MM-DD HH:MM task — reminder plus a phone call (optional paid provider)",
+  "",
+  "GOOGLE CALENDAR",
+  "/calendar — list the next 7 days",
+  "/event YYYY-MM-DD HH:MM duration title — add an event (Manila time)",
+  "/alarm YYYY-MM-DD HH:MM title — Calendar popup alert 5 minutes early (not an Android Clock alarm)",
+  "",
+  "PHONE CALLS (optional; disabled by default and may cost money)",
+  "/callme message — request an immediate phone call",
   "",
   "CLOUD MEMORY",
   "/remember fact — save a long-term fact",
@@ -18,8 +27,10 @@ const HELP = [
   "",
   "/help — show this message",
   "",
-  "Example: /remind 2026-10-25 18:00 Finish homework",
-  "Times use Asia/Manila (PHT). Cloud AI uses Cloudflare Workers AI. Local Ollama is an optional fallback when the bridge is online."
+  "Examples: /remind 2026-10-25 18:00 Finish homework",
+  "/event 2026-10-26 15:00 60 Science project meeting",
+  "/alarm 2026-10-27 06:30 Wake up",
+  "Times use Asia/Manila (PHT). Calendar integration needs a Google Apps Script bridge. Actual phone calls need an optional external voice provider."
 ].join("\n");
 
 const CLOUD_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
@@ -113,11 +124,112 @@ async function showReminders(env, chatId, todayOnly = false) {
   await sendText(env, chatId, heading + "\n\n" + lines.join("\n\n"));
 }
 
+
+async function callGoogleCalendar(env, payload) {
+  const endpoint = String(env.GOOGLE_CALENDAR_WEBAPP_URL || "").trim();
+  const secret = String(env.GOOGLE_CALENDAR_SHARED_SECRET || "");
+  if (!endpoint || !secret) {
+    return { ok: false, setupMissing: true, error: "Google Calendar is not connected." };
+  }
+  let response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      redirect: "follow",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...payload, secret: secret })
+    });
+  } catch (error) {
+    console.error("Google Calendar bridge request failed:", error?.name || "unknown");
+    return { ok: false, error: "Could not reach the Google Calendar bridge." };
+  }
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data || data.ok !== true) {
+    console.error("Google Calendar bridge returned an unsuccessful response:", response.status);
+    return { ok: false, error: (data && data.error) ? String(data.error).slice(0, 180) : "Google Calendar rejected the request." };
+  }
+  return data;
+}
+
+function phoneCallsConfigured(env) {
+  return String(env.JARVIS_CALLS_ENABLED || "").toLowerCase() === "true" &&
+    !!env.TWILIO_ACCOUNT_SID && !!env.TWILIO_AUTH_TOKEN &&
+    !!env.TWILIO_FROM_NUMBER && !!env.JARVIS_CALL_TO_NUMBER;
+}
+
+function escapeXml(text) {
+  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+async function placePhoneCall(env, chatId, spokenText, purpose) {
+  if (!phoneCallsConfigured(env)) {
+    return { ok: false, error: "Phone calls are disabled or not configured. Calls use an external voice provider and may cost money; use /remind for a free Telegram reminder." };
+  }
+  const to = String(env.JARVIS_CALL_TO_NUMBER).trim();
+  const from = String(env.TWILIO_FROM_NUMBER).trim();
+  if (!/^\+[1-9]\d{7,14}$/.test(to) || !/^\+[1-9]\d{7,14}$/.test(from)) {
+    return { ok: false, error: "Phone call setup needs the destination and caller ID in international E.164 format." };
+  }
+  const now = new Date();
+  const since = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const recent = await env.DB.prepare(
+    "SELECT COUNT(*) AS total FROM phone_call_log WHERE chat_id = ? AND created_at >= ?"
+  ).bind(String(chatId), since).first();
+  if (Number(recent?.total || 0) >= 3) {
+    return { ok: false, error: "Safety limit reached: JARVIS allows at most 3 call requests per rolling 24 hours." };
+  }
+  const latest = await env.DB.prepare(
+    "SELECT created_at FROM phone_call_log WHERE chat_id = ? ORDER BY id DESC LIMIT 1"
+  ).bind(String(chatId)).first();
+  if (latest && now.getTime() - new Date(latest.created_at).getTime() < 10 * 60 * 1000) {
+    return { ok: false, error: "Please wait at least 10 minutes between JARVIS call requests." };
+  }
+
+  const inserted = await env.DB.prepare(
+    "INSERT INTO phone_call_log (chat_id, created_at, status, purpose) VALUES (?, ?, 'requested', ?)"
+  ).bind(String(chatId), now.toISOString(), String(purpose || "manual").slice(0, 20)).run();
+  const logId = inserted.meta?.last_row_id;
+  const speech = String(spokenText || "Hello. This is JARVIS calling as requested.").trim().slice(0, 500);
+  const twiml = '<Response><Say language="en-US">' + escapeXml(speech) + '</Say></Response>';
+  const form = new URLSearchParams({ To: to, From: from, Twiml: twiml, TimeLimit: "60" });
+  try {
+    const response = await fetch(
+      "https://api.twilio.com/2010-04-01/Accounts/" + String(env.TWILIO_ACCOUNT_SID).trim() + "/Calls.json",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": "Basic " + btoa(String(env.TWILIO_ACCOUNT_SID).trim() + ":" + String(env.TWILIO_AUTH_TOKEN)),
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: form.toString()
+      }
+    );
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.sid) {
+      await env.DB.prepare("UPDATE phone_call_log SET status = 'failed' WHERE id = ?").bind(logId).run();
+      console.error("Phone call provider rejected call request:", response.status);
+      return { ok: false, error: "The phone provider did not start the call. Check its account, verified caller ID, and billing setup." };
+    }
+    await env.DB.prepare("UPDATE phone_call_log SET status = 'initiated', call_sid = ? WHERE id = ?")
+      .bind(String(data.sid), logId).run();
+    return { ok: true, callSid: String(data.sid) };
+  } catch (error) {
+    await env.DB.prepare("UPDATE phone_call_log SET status = 'failed' WHERE id = ?").bind(logId).run();
+    console.error("Phone call request failed:", error?.name || "unknown");
+    return { ok: false, error: "Could not reach the phone provider. No successful call was confirmed." };
+  }
+}
+
 function isCloudCommand(message) {
   const text = (message.text || "").trim().toLowerCase();
   return text === "/start" || text === "/help" || text === "help" ||
     text === "/schedule" || text === "/reminders" ||
     text === "/remind" || text.startsWith("/remind ") || text === "/cancel" || text.startsWith("/cancel ") ||
+    text === "/remindcall" || text.startsWith("/remindcall ") ||
+    text === "/calendar" || text === "/event" || text.startsWith("/event ") ||
+    text === "/alarm" || text.startsWith("/alarm ") ||
+    text === "/callme" || text.startsWith("/callme ") ||
     text.startsWith("/remember ") || text === "/remember" || text === "/memories" ||
     text === "/forget" || text.startsWith("/forget ") || text === "/history" || text === "/forgetme" ||
     text === "show my reminders" || text === "list reminders" ||
@@ -152,7 +264,110 @@ async function handleMessage(env, message) {
     await showReminders(env, chatId, false);
     return;
   }
-  if (text.startsWith("/remind")) {
+
+  if (text === "/calendar") {
+    const result = await callGoogleCalendar(env, { action: "list_events", days: 7 });
+    if (!result.ok) {
+      await sendText(env, chatId, result.setupMissing
+        ? "📅 Google Calendar isn't connected yet. Finish the Google Apps Script setup from the JARVIS Calendar integration guide."
+        : "📅 Calendar request failed: " + result.error);
+      return;
+    }
+    const events = result.events || [];
+    if (!events.length) {
+      await sendText(env, chatId, "📅 No Google Calendar events in the next 7 days.");
+      return;
+    }
+    const lines = events.slice(0, 15).map(event =>
+      "• " + formatManila(event.start) + " — " + String(event.title || "(Untitled event)") +
+      (event.location ? " (" + String(event.location).slice(0, 100) + ")" : "")
+    );
+    await sendText(env, chatId, "📅 GOOGLE CALENDAR — NEXT 7 DAYS\n\n" + lines.join("\n"));
+    return;
+  }
+
+  if (text === "/event" || text.startsWith("/event ") || text === "/alarm" || text.startsWith("/alarm ")) {
+    const isAlarmAlert = text === "/alarm" || text.startsWith("/alarm ");
+    const match = isAlarmAlert
+      ? /^\/alarm\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s+([\s\S]{1,160})$/i.exec(raw)
+      : /^\/event\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s+(\d{1,3})\s+([\s\S]{1,160})$/i.exec(raw);
+    if (!match) {
+      await sendText(env, chatId, isAlarmAlert
+        ? "Use: /alarm YYYY-MM-DD HH:MM title\nThis adds a Google Calendar event with a popup alert 5 minutes before it; it does not set Android Clock's native alarm."
+        : "Use: /event YYYY-MM-DD HH:MM duration title\nExample: /event 2026-10-26 15:00 60 Science project meeting\nTimes use Manila time; duration must be 15–480 minutes.");
+      return;
+    }
+    const start = manilaInputToUtc(match[1], match[2]);
+    const duration = isAlarmAlert ? 5 : Number(match[3]);
+    const title = (isAlarmAlert ? match[3] : match[4]).trim();
+    if (!start || start.getTime() <= Date.now() || (!isAlarmAlert && (!Number.isInteger(duration) || duration < 15 || duration > 480))) {
+      await sendText(env, chatId, "That date/time or duration is invalid. Use a future Manila date/time and a duration from 15 to 480 minutes for /event.");
+      return;
+    }
+    const end = new Date(start.getTime() + duration * 60 * 1000);
+    const result = await callGoogleCalendar(env, {
+      action: "create_event",
+      title: title,
+      start: start.toISOString(),
+      end: end.toISOString(),
+      popupReminderMinutes: isAlarmAlert ? 5 : undefined
+    });
+    if (!result.ok) {
+      await sendText(env, chatId, result.setupMissing
+        ? "📅 Google Calendar isn't connected yet. No event was created."
+        : "📅 I couldn't create that calendar event: " + result.error);
+      return;
+    }
+    const event = result.event || {};
+    await sendText(env, chatId, (isAlarmAlert ? "🔔 Calendar alert created!" : "✅ Google Calendar event created!") +
+      "\nTitle: " + String(event.title || title) +
+      "\nWhen: " + formatManila(event.start || start.toISOString()) +
+      (isAlarmAlert ? "\nPopup alert: 5 minutes before. This is a Calendar notification, not an Android Clock alarm." : ""));
+    return;
+  }
+
+  if (text === "/callme" || text.startsWith("/callme ")) {
+    const spoken = raw.slice("/callme".length).trim() ||
+      "Hello. This is JARVIS calling as requested. This is a test call.";
+    const result = await placePhoneCall(env, chatId, spoken, "manual");
+    if (!result.ok) {
+      await sendText(env, chatId, "📞 No call was placed. " + result.error);
+      return;
+    }
+    await sendText(env, chatId, "📞 JARVIS asked the phone provider to call you. If the call doesn't arrive, check the provider's call logs and verified caller ID. Calls may incur charges.");
+    return;
+  }
+
+  if (text === "/remindcall" || text.startsWith("/remindcall ")) {
+    if (!phoneCallsConfigured(env)) {
+      await sendText(env, chatId, "📞 Phone-call reminders aren't enabled. No reminder was created. This optional feature needs a configured voice provider and can cost money. Use /remind for the free Telegram reminder instead.");
+      return;
+    }
+    const match = /^\/remindcall\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s+([\s\S]{1,300})$/i.exec(raw);
+    if (!match) {
+      await sendText(env, chatId, "Use: /remindcall YYYY-MM-DD HH:MM task\nExample: /remindcall 2026-10-26 18:00 Call me to study\nThis creates a Telegram reminder plus a phone call at the due time.");
+      return;
+    }
+    const due = manilaInputToUtc(match[1], match[2]);
+    if (!due || due.getTime() <= Date.now()) {
+      await sendText(env, chatId, "That date/time is invalid or already passed. Use a future Manila date/time.");
+      return;
+    }
+    const task = match[3].trim();
+    const result = await env.DB.prepare(
+      "INSERT INTO reminders (chat_id, task, due_at, created_at) VALUES (?, ?, ?, ?)"
+    ).bind(chatId, task, due.toISOString(), new Date().toISOString()).run();
+    const reminderId = result.meta?.last_row_id;
+    await env.DB.prepare(
+      "INSERT INTO phone_call_reminders (reminder_id, chat_id, status, created_at) VALUES (?, ?, 'pending', ?)"
+    ).bind(reminderId, chatId, new Date().toISOString()).run();
+    await sendText(env, chatId, "✅ Phone-call reminder saved!\nID: #" + reminderId +
+      "\nTask: " + task + "\nWhen: " + formatManila(due.toISOString()) +
+      "\nAt the due time, JARVIS will send the Telegram reminder and request a phone call. Provider charges may apply.");
+    return;
+  }
+
+  if (text.startsWith("/remind ")) {
     const match = /^\/remind\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s+([\s\S]{1,300})$/i.exec(raw);
     if (!match) {
       await sendText(env, chatId, "Use this format (Manila time):\n/remind YYYY-MM-DD HH:MM task\n\nExample:\n/remind 2026-10-25 18:00 Study for science");
@@ -380,13 +595,29 @@ export default {
     }
     const now = new Date().toISOString();
     const due = await env.DB.prepare(
-      "SELECT id, chat_id, task, due_at FROM reminders WHERE sent_at IS NULL AND cancelled_at IS NULL AND due_at <= ? ORDER BY due_at LIMIT 25"
+      "SELECT r.id, r.chat_id, r.task, r.due_at, p.status AS call_status FROM reminders r LEFT JOIN phone_call_reminders p ON p.reminder_id = r.id WHERE r.sent_at IS NULL AND r.cancelled_at IS NULL AND r.due_at <= ? ORDER BY r.due_at LIMIT 25"
     ).bind(now).all();
 
     for (const reminder of due.results || []) {
       try {
         await sendText(env, reminder.chat_id,
           "⏰ JARVIS REMINDER\n\n" + reminder.task + "\n\nScheduled: " + formatManila(reminder.due_at));
+        if (reminder.call_status === "pending") {
+          const spoken = "JARVIS reminder. " + reminder.task + ". Scheduled for " + formatManila(reminder.due_at) + ".";
+          const call = await placePhoneCall(env, reminder.chat_id, spoken, "reminder");
+          await env.DB.prepare(
+            "UPDATE phone_call_reminders SET status = ?, call_sid = ?, completed_at = ?, last_error = ? WHERE reminder_id = ? AND status = 'pending'"
+          ).bind(
+            call.ok ? "initiated" : "failed",
+            call.callSid || null,
+            new Date().toISOString(),
+            call.ok ? null : String(call.error || "Call not placed").slice(0, 240),
+            reminder.id
+          ).run();
+          if (!call.ok) {
+            await sendText(env, reminder.chat_id, "📞 Reminder phone call was not placed: " + call.error);
+          }
+        }
         await env.DB.prepare("UPDATE reminders SET sent_at = ? WHERE id = ? AND sent_at IS NULL")
           .bind(new Date().toISOString(), reminder.id).run();
       } catch (error) {
