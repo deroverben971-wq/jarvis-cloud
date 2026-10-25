@@ -1,48 +1,80 @@
-# JARVIS Cloud — Phase 2 (Cloud AI, reminders, and memory)
+# JARVIS Cloud — Phase 2 (Cloud AI, memory, calendar, reminders)
 
-This is a **single-Telegram-bot** setup. Telegram delivers messages to a Cloudflare Worker. With a Workers AI binding named `AI`, ordinary conversations run on Cloudflare so they can work while the Windows PC is off. Cloudflare D1 stores cloud conversation history and saved facts. Reminders are managed by the same Worker.
+JARVIS receives messages through a Cloudflare Worker and uses Workers AI for normal conversations, so the PC can be off. D1 stores cloud chat history, saved facts, reminders, and minimal phone-call request metadata. The local Ollama setup and SQLite file remain a backup; local memory is not automatically copied to D1.
 
-Your local `jarvis.py`, `local_bridge.py`, Ollama model, and SQLite file remain available as a backup/fallback. Do not run the old `jarvis.py` Telegram polling process while the webhook is active.
+## Commands
 
-## Features
+- /help — show commands.
+- /calendar — list events for the next 7 days from your Google Calendar default calendar.
+- /event YYYY-MM-DD HH:MM duration title — create a Google Calendar event; duration 15–480 minutes. All times are Asia/Manila.
+- /alarm YYYY-MM-DD HH:MM title — create a Google Calendar event with a popup alert 5 minutes before it. This is not a native Android Clock alarm. Google Calendar must be installed/signed in on Android, event sync enabled, and notifications allowed.
+- /schedule — reminders due today.
+- /reminders — list upcoming JARVIS reminders.
+- /remind YYYY-MM-DD HH:MM task — free Telegram reminder.
+- /remindcall YYYY-MM-DD HH:MM task — create a JARVIS reminder that also requests an actual phone call when due. Requires optional voice provider configuration; it is disabled unless that configuration is complete.
+- /callme message — explicitly request an immediate spoken phone call. Disabled unless all optional voice settings are configured.
+- /cancel ID — cancel an active JARVIS reminder.
+- /remember fact, /memories, /forget ID, /history, /forgetme — manage cloud facts and chat history.
 
-- Cloud AI chat using Workers AI model `@cf/zai-org/glm-4.7-flash` when the `AI` binding is enabled.
-- Cloud conversation history stored in D1; `/history` shows recent messages.
-- Saved cloud facts: `/remember fact`, `/memories`, and `/forget ID`.
-- `/forgetme` erases cloud conversation history and cloud facts for the configured chat. It does **not** erase the separate local SQLite database on Windows.
-- `/schedule` and “What's my schedule today?”
-- `/reminders`, `/remind YYYY-MM-DD HH:MM task`, and `/cancel ID`.
-- Reminder times use Asia/Manila (UTC+8).
-- The Worker only responds to the configured Telegram chat ID; webhook requests are protected by the Telegram webhook secret.
-- If the Workers AI binding is missing, normal chat is queued for the local Ollama bridge. If a cloud inference request fails, the message is queued for the local bridge as a fallback.
+## Configure Google Calendar (free)
 
-## Cost and limits
+This connector uses Google Apps Script's Calendar service. The user authorizes the script to access their default Google Calendar. Apps Script deployment and CalendarApp are documented by Google:
+https://developers.google.com/apps-script/guides/web
+https://developers.google.com/apps-script/reference/calendar/calendar-app
 
-Workers AI has a free allocation of **10,000 Neurons per day**. If the free allowance is exhausted, inference requests fail until the daily reset unless you choose a paid plan. Do not enable a paid plan if you require ₱0. Workers, D1, and AI have usage limits that can change. Check current official documentation:
-- https://developers.cloudflare.com/workers-ai/platform/pricing/
-- https://developers.cloudflare.com/workers-ai/configuration/bindings/
-- https://developers.cloudflare.com/workers/platform/limits/
-- https://developers.cloudflare.com/d1/
+1. Open https://script.google.com/ and create a new project called JARVIS Calendar Bridge.
+2. Replace the default code in Code.gs with the complete contents of google-calendar-apps-script.js from this repository's main branch.
+3. In the Apps Script project settings, set the time zone to Asia/Manila.
+4. Generate a strong random secret locally on Windows. In PowerShell, paste:
+   
+       $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+       $bytes = New-Object byte[] 32
+       $rng.GetBytes($bytes)
+       $secret = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
+       Set-Clipboard $secret
+       Write-Host "Secret generated and copied. Keep it private."
 
-## Deploy the cloud AI update to your existing setup
+5. In Project Settings → Script properties, add property JARVIS_SHARED_SECRET and paste the generated secret as its value. Do not put the secret into code or GitHub.
+6. Choose Deploy → New deployment → Web app. Set Execute as to your account. For Who has access, select the broadest available option that permits unauthenticated HTTPS requests to the web app (usually Anyone). The endpoint is protected by the random shared secret; keep the URL and secret private. Click Deploy and approve the Google Calendar permission prompt.
+7. Copy the deployed web app URL ending in /exec.
+8. In Cloudflare → Workers & Pages → jarvis-cloud-phase2 → Settings → Variables and Secrets, add:
+   - GOOGLE_CALENDAR_WEBAPP_URL — the deployed /exec URL.
+   - GOOGLE_CALENDAR_SHARED_SECRET — the same secret used in Script properties. Store it as a secret, not a GitHub file.
+9. Save/deploy the Worker. Do not remove existing DB, AI, or Telegram/bridge secrets.
+10. Test in Telegram with /calendar, then create a low-stakes future test event such as /event 2026-10-27 15:00 30 JARVIS calendar test. Check that it appears in the Google Calendar app on your Android phone and delete it afterward if desired.
 
-1. **Update the D1 schema.** Open Cloudflare Dashboard → Workers & Pages → D1 database `jarvis-reminders` → Console. Run the complete contents of `cloud-phase2/schema.sql`. These statements use `IF NOT EXISTS`, so the existing reminder and bridge tables are preserved while the two cloud-memory tables are added.
-2. **Update the Worker source.** Open Worker `jarvis-cloud-phase2` → Edit Code. Replace the Worker source with the contents of `cloud-phase2/src/index.js` from this repository branch after reviewing/merging the pull request, then save/deploy.
-3. **Add the Workers AI binding.** On the Worker's Settings/Bindings page, choose Add binding → Workers AI. Set the variable name to exactly `AI`. Save and deploy the Worker. The code uses `env.AI`.
-4. **Keep existing bindings and secrets.** Do not delete or rename D1 binding `DB` or the existing `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, or `JARVIS_BRIDGE_SECRET`. This code requires the same existing names and values.
-5. **Keep the existing Telegram webhook.** You do not need to register it again just to update Worker code or add the AI binding.
-6. **Test from Telegram.** Send `/help`, then a normal message such as “JARVIS, introduce yourself.” Try `/remember I prefer concise answers`, then `/memories`, then `/history`. Test reminders with a future Manila time.
-7. **PC-off test.** After the cloud AI binding and code are deployed and normal messages receive cloud AI answers, you can stop the local bridge and shut down the PC for a test. Cloud AI chats and reminders should continue. Local Ollama is no longer needed for normal replies when Workers AI is active.
-8. **Optional local fallback.** If Cloudflare AI is missing or temporarily unavailable, the Worker queues a fallback job for `local_bridge.py`. The bridge can only process that job while the PC, Ollama, and bridge are online.
+The bridge supports listing the next 7 days and creating events in the default Google Calendar. It does not yet parse arbitrary natural-language requests into events; use the explicit /event command to avoid accidental calendar writes.
 
-## Cloud memory versus the old local memory
+## Actual phone calls (optional; not free to run reliably)
 
-Cloud memory starts separately. Existing facts and messages in `C:\Users\noeld\JARVIS\jarvis_memory.db` are **not automatically uploaded** to D1. Your local database is left untouched as a backup. Re-save any facts you want available to the cloud assistant with `/remember fact`. Do not upload your database to this public repository.
+The optional code uses Twilio Programmable Voice to request an outbound call and speak the reminder text. A call uses the configured destination number and a Twilio number or verified outgoing caller ID. The code is disabled by default and has a rolling safety cap of 3 calls per 24 hours and at least 10 minutes between calls.
 
-## Security and reliability notes
+Current Twilio pricing for calls to Philippine mobile numbers is listed at about US$0.2938/minute, and a rented Philippines local number is listed at US$15/month; actual charges depend on account, route, taxes, and provider terms. Check the current price before enabling:
+https://www.twilio.com/en-us/voice/pricing/ph
+https://www.twilio.com/docs/voice/api/call-resource
 
-- Never commit Telegram tokens, webhook secrets, bridge secrets, conversation contents, or personal reminder data to GitHub.
-- Keep the existing morning-briefing workflow unchanged.
-- The webhook checks Telegram's configured secret and only acts on the configured chat ID.
-- D1 stores cloud chat history and saved facts until they are deleted with `/forgetme` or an individual fact is removed with `/forget ID`. Avoid saving passwords or other secrets as facts.
-- The one-minute Cron Trigger checks due reminders about once per minute; exact delivery time cannot be guaranteed.
+Trial accounts may have restrictions, and caller ID must be valid/verified. There is no reliable, permanently free way for a cloud app to place normal cellular calls. If under 18, do not sign up for or add billing to a telephony service yourself; have a parent/guardian review and manage any account or charges. Do not share any phone number or provider credentials in chat or commit them to GitHub.
+
+Only configure these in Cloudflare Worker Settings → Variables and Secrets after an adult-approved account is ready:
+- JARVIS_CALLS_ENABLED — text variable true (only enable after reading charges and testing).
+- TWILIO_ACCOUNT_SID — secret.
+- TWILIO_AUTH_TOKEN — secret.
+- TWILIO_FROM_NUMBER — secret; a Twilio number or verified outbound caller ID in international + format.
+- JARVIS_CALL_TO_NUMBER — secret; your target mobile in international + format.
+
+If any setting is missing, no call is placed. /callme Hello JARVIS requests an immediate call. /remindcall YYYY-MM-DD HH:MM task sends the regular Telegram reminder and attempts one phone call when due. Requests are logged without saving the phone number or spoken content; max 3 attempts per rolling 24 hours and at least 10 minutes between attempts. Provider failures are reported to Telegram.
+
+## Android alarms
+
+/alarm creates a Google Calendar event with a 5-minute popup notification. It depends on the Google Calendar app being signed in, synced, and allowed to notify; it is not guaranteed to sound like a native Clock alarm and may respect Android's notification/DND settings. To set alarms directly in the Android Clock app, a separate phone-side companion/automation integration is required; a cloud Worker cannot directly execute Android's ACTION_SET_ALARM intent. See Android's official API docs:
+https://developer.android.com/reference/android/provider/AlarmClock
+
+## Cloud AI and free limits
+
+Workers AI has a limited free allocation of 10,000 Neurons per day. Usage beyond the allowance can fail on the Free plan; don't enable paid Workers or AI billing if your requirement is ₱0. Check https://developers.cloudflare.com/workers-ai/platform/pricing/ for current terms.
+
+## Memory and privacy
+
+Cloud AI stores conversation messages and saved facts in D1. /forgetme removes cloud chat history and cloud facts for the configured Telegram chat, but does not erase local C:\Users\noeld\JARVIS\jarvis_memory.db. Do not save passwords or other secrets as memory facts. Reminder tasks, cloud chat content, and personal event titles are private user data; never commit them to this public repository.
+
+Keep the existing Telegram webhook and the existing Worker DB/AI bindings. Updating Worker source does not require re-registering the Telegram webhook. The scheduled trigger * * * * * should remain enabled for reminders.
