@@ -58,3 +58,29 @@ CREATE TABLE IF NOT EXISTS cloud_facts (
 
 CREATE INDEX IF NOT EXISTS idx_cloud_facts_chat_id
   ON cloud_facts (chat_id, id);
+
+-- Metadata for optional, explicitly requested phone calls. Do not store phone numbers here.
+CREATE TABLE IF NOT EXISTS phone_call_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  status TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  call_sid TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_phone_call_log_chat_created
+  ON phone_call_log (chat_id, created_at);
+
+CREATE TABLE IF NOT EXISTS phone_call_reminders (
+  reminder_id INTEGER PRIMARY KEY,
+  chat_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  call_sid TEXT,
+  created_at TEXT NOT NULL,
+  completed_at TEXT,
+  last_error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_phone_call_reminders_status
+  ON phone_call_reminders (status, reminder_id);
