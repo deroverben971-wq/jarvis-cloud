@@ -12,6 +12,7 @@ on:
       - main
     paths:
       - "cloud-phase2/src/index.js"
+      - "cloud-phase2/google-calendar-apps-script.js"
       - "cloud-phase2/schema.sql"
       - ".github/workflows/validate-cloud-phase2.yml"
 
