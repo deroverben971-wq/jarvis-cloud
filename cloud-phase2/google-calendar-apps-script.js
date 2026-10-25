@@ -1,13 +1,14 @@
 /**
  * JARVIS Google Calendar bridge.
  *
- * Deploy as a Web App that executes as you. Store JARVIS_SHARED_SECRET in
- * Project Settings > Script properties; do not put the secret in this file.
- * Only the configured Cloudflare Worker should know the matching secret.
+ * Uses the Advanced Calendar service with the narrower calendar.events.owned
+ * OAuth scope. Add the Calendar API under Services in Apps Script.
+ * Store JARVIS_SHARED_SECRET under Project Settings > Script properties.
  */
 
 const SECRET_PROPERTY = "JARVIS_SHARED_SECRET";
 const TIME_ZONE = "Asia/Manila";
+const CALENDAR_ID = "primary";
 
 function doGet() {
   return jsonOutput({ ok: true, service: "JARVIS Google Calendar bridge", method: "POST" });
@@ -23,25 +24,31 @@ function doPost(e) {
 
     const action = String(body.action || "");
     if (action === "ping") {
-      const calendar = CalendarApp.getDefaultCalendar();
-      return jsonOutput({ ok: true, calendar: calendar.getName(), timeZone: TIME_ZONE });
+      return jsonOutput({ ok: true, calendar: "primary", timeZone: TIME_ZONE });
     }
 
-    const calendar = CalendarApp.getDefaultCalendar();
     if (action === "list_events") {
       const days = Math.min(14, Math.max(1, Number(body.days) || 7));
       const start = new Date();
       const end = new Date(start.getTime() + days * 24 * 60 * 60 * 1000);
-      const events = calendar.getEvents(start, end).slice(0, 20).map(function (event) {
+      const result = Calendar.Events.list(CALENDAR_ID, {
+        timeMin: start.toISOString(),
+        timeMax: end.toISOString(),
+        singleEvents: true,
+        orderBy: "startTime",
+        maxResults: 20
+      });
+      const events = (result.items || []).map(function (event) {
         return {
-          id: event.getId(),
-          title: event.getTitle(),
-          start: event.getStartTime().toISOString(),
-          end: event.getEndTime().toISOString(),
-          location: event.getLocation() || ""
+          id: event.id,
+          title: event.summary || "(Untitled event)",
+          start: event.start.dateTime || event.start.date,
+          end: event.end.dateTime || event.end.date,
+          location: event.location || "",
+          allDay: !event.start.dateTime
         };
       });
-      return jsonOutput({ ok: true, calendar: calendar.getName(), events: events });
+      return jsonOutput({ ok: true, calendar: CALENDAR_ID, events: events });
     }
 
     if (action === "create_event") {
@@ -55,20 +62,30 @@ function doPost(e) {
       if (start.getTime() < Date.now() - 60 * 1000) {
         return jsonOutput({ ok: false, error: "Event start must be in the future" });
       }
-      const event = calendar.createEvent(title, start, end, { description: description });
+
+      const eventResource = {
+        summary: title,
+        description: description,
+        start: { dateTime: start.toISOString(), timeZone: TIME_ZONE },
+        end: { dateTime: end.toISOString(), timeZone: TIME_ZONE }
+      };
       if (body.popupReminderMinutes !== undefined) {
         const minutes = Number(body.popupReminderMinutes);
         if (Number.isInteger(minutes) && minutes >= 5 && minutes <= 40320) {
-          event.addPopupReminder(minutes);
+          eventResource.reminders = {
+            useDefault: false,
+            overrides: [{ method: "popup", minutes: minutes }]
+          };
         }
       }
+      const event = Calendar.Events.insert(eventResource, CALENDAR_ID);
       return jsonOutput({
         ok: true,
         event: {
-          id: event.getId(),
-          title: event.getTitle(),
-          start: event.getStartTime().toISOString(),
-          end: event.getEndTime().toISOString()
+          id: event.id,
+          title: event.summary || title,
+          start: event.start.dateTime || event.start.date,
+          end: event.end.dateTime || event.end.date
         }
       });
     }

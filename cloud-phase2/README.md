@@ -1,80 +1,89 @@
 # JARVIS Cloud — Phase 2 (Cloud AI, memory, calendar, reminders)
 
-JARVIS receives messages through a Cloudflare Worker and uses Workers AI for normal conversations, so the PC can be off. D1 stores cloud chat history, saved facts, reminders, and minimal phone-call request metadata. The local Ollama setup and SQLite file remain a backup; local memory is not automatically copied to D1.
+JARVIS receives Telegram messages through a Cloudflare Worker and uses Workers AI for normal conversations, so the PC can be off. D1 stores cloud chat history, saved facts, reminders, and minimal optional phone-call metadata. The local Ollama setup and SQLite file remain a backup; local memory is not automatically copied to D1.
 
 ## Commands
 
 - /help — show commands.
 - /calendar — list events for the next 7 days from your Google Calendar default calendar.
 - /event YYYY-MM-DD HH:MM duration title — create a Google Calendar event; duration 15–480 minutes. All times are Asia/Manila.
-- /alarm YYYY-MM-DD HH:MM title — create a Google Calendar event with a popup alert 5 minutes before it. This is not a native Android Clock alarm. Google Calendar must be installed/signed in on Android, event sync enabled, and notifications allowed.
+- /alarm YYYY-MM-DD HH:MM title — create a Google Calendar event with a popup alert 5 minutes before it. This is not a native Android Clock alarm. Google Calendar must be signed in and synced on Android, with notifications allowed.
 - /schedule — reminders due today.
 - /reminders — list upcoming JARVIS reminders.
 - /remind YYYY-MM-DD HH:MM task — free Telegram reminder.
-- /remindcall YYYY-MM-DD HH:MM task — create a JARVIS reminder that also requests an actual phone call when due. Requires optional voice provider configuration; it is disabled unless that configuration is complete.
+- /remindcall YYYY-MM-DD HH:MM task — create a JARVIS reminder that also requests a phone call when due. Requires optional voice-provider configuration; disabled unless fully configured.
 - /callme message — explicitly request an immediate spoken phone call. Disabled unless all optional voice settings are configured.
 - /cancel ID — cancel an active JARVIS reminder.
 - /remember fact, /memories, /forget ID, /history, /forgetme — manage cloud facts and chat history.
 
-## Configure Google Calendar (free)
+## Before deploying this integration update
 
-This connector uses Google Apps Script's Calendar service. The user authorizes the script to access their default Google Calendar. Apps Script deployment and CalendarApp are documented by Google:
+After merging the integration update, run the complete contents of cloud-phase2/schema.sql in Cloudflare D1 Console before deploying the new Worker source. The schema uses CREATE TABLE IF NOT EXISTS, so it preserves existing reminders, chat history, facts, and bridge data while adding the optional phone-call metadata tables. Keep the existing Telegram webhook and all current secret values.
+
+## Google Calendar connector (free)
+
+This connector uses the Advanced Google Calendar API from Google Apps Script and an event-only OAuth scope. Google documents explicit scope configuration at:
+https://developers.google.com/apps-script/concepts/scopes
+https://developers.google.com/apps-script/guides/services/advanced
 https://developers.google.com/apps-script/guides/web
-https://developers.google.com/apps-script/reference/calendar/calendar-app
 
-1. Open https://script.google.com/ and create a new project called JARVIS Calendar Bridge.
-2. Replace the default code in Code.gs with the complete contents of google-calendar-apps-script.js from this repository's main branch.
-3. In the Apps Script project settings, set the time zone to Asia/Manila.
-4. Generate a strong random secret locally on Windows. In PowerShell, paste:
-   
-       $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-       $bytes = New-Object byte[] 32
-       $rng.GetBytes($bytes)
-       $secret = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
-       Set-Clipboard $secret
-       Write-Host "Secret generated and copied. Keep it private."
+1. Open https://script.google.com/ and create a project called JARVIS Calendar Bridge.
+2. In Code.gs, replace the starter code with the complete contents of google-calendar-apps-script.js from this repository's main branch.
+3. In the left sidebar, click Services + and add Calendar API (Advanced Google Service, version v3).
+4. Open Project Settings and enable Show "appsscript.json" manifest file in editor. Open appsscript.json and replace its contents with the complete contents of cloud-phase2/appsscript.json from this repository's main branch. This explicitly requests https://www.googleapis.com/auth/calendar.events.owned, which permits event operations on calendars you own without requesting permission to share or permanently delete entire calendars.
+5. Save both files. Set the project time zone to Asia/Manila.
+6. Generate a strong random secret locally on Windows. In PowerShell, paste:
 
-5. In Project Settings → Script properties, add property JARVIS_SHARED_SECRET and paste the generated secret as its value. Do not put the secret into code or GitHub.
-6. Choose Deploy → New deployment → Web app. Set Execute as to your account. For Who has access, select the broadest available option that permits unauthenticated HTTPS requests to the web app (usually Anyone). The endpoint is protected by the random shared secret; keep the URL and secret private. Click Deploy and approve the Google Calendar permission prompt.
-7. Copy the deployed web app URL ending in /exec.
-8. In Cloudflare → Workers & Pages → jarvis-cloud-phase2 → Settings → Variables and Secrets, add:
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $bytes = New-Object byte[] 32
+    $rng.GetBytes($bytes)
+    $secret = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
+    Set-Clipboard $secret
+    Write-Host "Secret generated and copied. Keep it private."
+
+7. In Project Settings → Script properties, add or retain property JARVIS_SHARED_SECRET and paste the generated secret as its value. Never put the secret into code, GitHub, or this chat. If you already generated a secret, you may keep using that same value.
+8. Choose Deploy → New deployment → Web app. Set Execute as to your account. For Who has access, select the broadest available option that permits HTTPS requests from Cloudflare without interactive Google sign-in (usually Anyone). The endpoint is protected by the random shared secret; keep the URL and secret private.
+9. Review the Google permission screen carefully. After replacing both Code.gs and appsscript.json and enabling the Advanced Calendar API, consent should request event-level access to calendars you own. If it still says “See, edit, share, and permanently delete all the calendars,” cancel and check that the old CalendarApp code and broad manifest scope are gone. Do not approve the broad permission request.
+10. Copy the deployed web app URL ending in /exec.
+11. In Cloudflare → Workers & Pages → jarvis-cloud-phase2 → Settings → Variables and Secrets, add:
    - GOOGLE_CALENDAR_WEBAPP_URL — the deployed /exec URL.
-   - GOOGLE_CALENDAR_SHARED_SECRET — the same secret used in Script properties. Store it as a secret, not a GitHub file.
-9. Save/deploy the Worker. Do not remove existing DB, AI, or Telegram/bridge secrets.
-10. Test in Telegram with /calendar, then create a low-stakes future test event such as /event 2026-10-27 15:00 30 JARVIS calendar test. Check that it appears in the Google Calendar app on your Android phone and delete it afterward if desired.
+   - GOOGLE_CALENDAR_SHARED_SECRET — the same secret used in Script properties. Store it as a Cloudflare secret.
+12. Save/deploy the Worker. Keep existing DB, AI, and Telegram/bridge secrets unchanged. Update the Worker source with cloud-phase2/src/index.js after this feature branch is merged and reviewed.
+13. Test /calendar in Telegram, then create a low-stakes future event with /event YYYY-MM-DD HH:MM 30 JARVIS calendar test. Check it appears on your Android Google Calendar app; delete the test event if desired.
 
-The bridge supports listing the next 7 days and creating events in the default Google Calendar. It does not yet parse arbitrary natural-language requests into events; use the explicit /event command to avoid accidental calendar writes.
+The connector can list the next 7 days and create events in the default calendar. It does not yet parse arbitrary natural-language requests into calendar events; use the explicit /event command to avoid accidental calendar writes.
 
 ## Actual phone calls (optional; not free to run reliably)
 
-The optional code uses Twilio Programmable Voice to request an outbound call and speak the reminder text. A call uses the configured destination number and a Twilio number or verified outgoing caller ID. The code is disabled by default and has a rolling safety cap of 3 calls per 24 hours and at least 10 minutes between calls.
+The optional code uses an external voice provider to request outbound calls and speak reminder text. It is disabled by default. Calls can incur provider charges, and trial accounts may have restrictions. The call feature has a maximum of 3 attempts per rolling 24 hours and a minimum 10-minute cooldown.
 
-Current Twilio pricing for calls to Philippine mobile numbers is listed at about US$0.2938/minute, and a rented Philippines local number is listed at US$15/month; actual charges depend on account, route, taxes, and provider terms. Check the current price before enabling:
+Current Twilio prices for Philippine mobile calls and phone numbers vary by route/account and must be checked directly before any adult-approved configuration:
 https://www.twilio.com/en-us/voice/pricing/ph
 https://www.twilio.com/docs/voice/api/call-resource
 
-Trial accounts may have restrictions, and caller ID must be valid/verified. There is no reliable, permanently free way for a cloud app to place normal cellular calls. If under 18, do not sign up for or add billing to a telephony service yourself; have a parent/guardian review and manage any account or charges. Do not share any phone number or provider credentials in chat or commit them to GitHub.
+There is no reliable permanently free cloud service for ordinary cellular phone calls. If under 18, have a parent/guardian review and manage any phone-provider account or billing. Do not share phone numbers or provider credentials in chat or commit them to GitHub.
 
-Only configure these in Cloudflare Worker Settings → Variables and Secrets after an adult-approved account is ready:
-- JARVIS_CALLS_ENABLED — text variable true (only enable after reading charges and testing).
+Call settings remain disabled until deliberately configured in Worker Settings → Variables and Secrets:
+- JARVIS_CALLS_ENABLED — text variable true.
 - TWILIO_ACCOUNT_SID — secret.
 - TWILIO_AUTH_TOKEN — secret.
-- TWILIO_FROM_NUMBER — secret; a Twilio number or verified outbound caller ID in international + format.
-- JARVIS_CALL_TO_NUMBER — secret; your target mobile in international + format.
+- TWILIO_FROM_NUMBER — secret, international + format.
+- JARVIS_CALL_TO_NUMBER — secret, international + format.
 
-If any setting is missing, no call is placed. /callme Hello JARVIS requests an immediate call. /remindcall YYYY-MM-DD HH:MM task sends the regular Telegram reminder and attempts one phone call when due. Requests are logged without saving the phone number or spoken content; max 3 attempts per rolling 24 hours and at least 10 minutes between attempts. Provider failures are reported to Telegram.
+If any setting is missing, no call is placed. /callme message requests an immediate call; /remindcall YYYY-MM-DD HH:MM task creates a regular Telegram reminder plus an optional phone-call attempt at the due time. Provider errors are reported to Telegram.
 
 ## Android alarms
 
-/alarm creates a Google Calendar event with a 5-minute popup notification. It depends on the Google Calendar app being signed in, synced, and allowed to notify; it is not guaranteed to sound like a native Clock alarm and may respect Android's notification/DND settings. To set alarms directly in the Android Clock app, a separate phone-side companion/automation integration is required; a cloud Worker cannot directly execute Android's ACTION_SET_ALARM intent. See Android's official API docs:
+/alarm creates a Google Calendar event with a 5-minute popup alert. It is not guaranteed to behave like a native Clock alarm and depends on Calendar sync, notification settings, and Android power/DND settings. Direct control of Android Clock requires a separate phone-side integration; a cloud Worker cannot directly run Android's ACTION_SET_ALARM intent. Android API reference:
 https://developer.android.com/reference/android/provider/AlarmClock
 
 ## Cloud AI and free limits
 
-Workers AI has a limited free allocation of 10,000 Neurons per day. Usage beyond the allowance can fail on the Free plan; don't enable paid Workers or AI billing if your requirement is ₱0. Check https://developers.cloudflare.com/workers-ai/platform/pricing/ for current terms.
+Workers AI has a limited free allocation of 10,000 Neurons per day under current published terms. Usage beyond the allowance can fail on the Free plan; do not enable paid billing if your goal is ₱0. Verify current terms here:
+https://developers.cloudflare.com/workers-ai/platform/pricing/
 
 ## Memory and privacy
 
-Cloud AI stores conversation messages and saved facts in D1. /forgetme removes cloud chat history and cloud facts for the configured Telegram chat, but does not erase local C:\Users\noeld\JARVIS\jarvis_memory.db. Do not save passwords or other secrets as memory facts. Reminder tasks, cloud chat content, and personal event titles are private user data; never commit them to this public repository.
+Cloud AI stores conversation messages and saved facts in D1. /forgetme removes cloud chat history and cloud facts for the configured Telegram chat, but does not erase local C:\Users\noeld\JARVIS\jarvis_memory.db. Avoid saving passwords or other secrets as facts. Reminder tasks, conversation contents, and event titles are personal data; never commit them to this public repository.
 
-Keep the existing Telegram webhook and the existing Worker DB/AI bindings. Updating Worker source does not require re-registering the Telegram webhook. The scheduled trigger * * * * * should remain enabled for reminders.
+Keep the existing Telegram webhook, DB binding, AI binding, and secrets. Updating Worker code does not require re-registering the webhook. The scheduled trigger * * * * * should remain enabled for reminders.

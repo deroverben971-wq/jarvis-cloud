@@ -5,6 +5,7 @@ on:
     paths:
       - "cloud-phase2/src/index.js"
       - "cloud-phase2/google-calendar-apps-script.js"
+      - "cloud-phase2/appsscript.json"
       - "cloud-phase2/schema.sql"
       - ".github/workflows/validate-cloud-phase2.yml"
   push:
@@ -35,6 +36,8 @@ jobs:
         run: |
           cp cloud-phase2/google-calendar-apps-script.js /tmp/google-calendar-apps-script.js
           node --check /tmp/google-calendar-apps-script.js
+      - name: Validate Apps Script manifest JSON
+        run: python -m json.tool cloud-phase2/appsscript.json > /dev/null
       - name: Validate D1 schema SQL with SQLite
         run: |
           python - <<'PY'

@@ -278,10 +278,13 @@ async function handleMessage(env, message) {
       await sendText(env, chatId, "📅 No Google Calendar events in the next 7 days.");
       return;
     }
-    const lines = events.slice(0, 15).map(event =>
-      "• " + formatManila(event.start) + " — " + String(event.title || "(Untitled event)") +
-      (event.location ? " (" + String(event.location).slice(0, 100) + ")" : "")
-    );
+    const lines = events.slice(0, 15).map(event => {
+      const startLabel = event.allDay || /^\\d{4}-\\d{2}-\\d{2}$/.test(String(event.start || ""))
+        ? "All day " + String(event.start || "").slice(0, 10)
+        : formatManila(event.start);
+      return "• " + startLabel + " — " + String(event.title || "(Untitled event)") +
+        (event.location ? " (" + String(event.location).slice(0, 100) + ")" : "");
+    });
     await sendText(env, chatId, "📅 GOOGLE CALENDAR — NEXT 7 DAYS\n\n" + lines.join("\n"));
     return;
   }
