@@ -58,7 +58,7 @@ function doPost(e) {
       const event = calendar.createEvent(title, start, end, { description: description });
       if (body.popupReminderMinutes !== undefined) {
         const minutes = Number(body.popupReminderMinutes);
-        if (Number.isInteger(minutes) && minutes >= 0 && minutes <= 1440) {
+        if (Number.isInteger(minutes) && minutes >= 5 && minutes <= 40320) {
           event.addPopupReminder(minutes);
         }
       }
