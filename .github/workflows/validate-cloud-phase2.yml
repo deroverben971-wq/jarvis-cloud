@@ -6,7 +6,6 @@ on:
       - "cloud-phase2/src/index.js"
       - "cloud-phase2/google-calendar-apps-script.js"
       - "cloud-phase2/gmail-outreach-apps-script.js"
-      - "cloud-phase2/gmail-outreach-apps-script.js"
       - "cloud-phase2/gmail-outreach-appsscript.json"
       - "cloud-phase2/appsscript.json"
       - "cloud-phase2/schema.sql"
@@ -17,6 +16,8 @@ on:
     paths:
       - "cloud-phase2/src/index.js"
       - "cloud-phase2/google-calendar-apps-script.js"
+      - "cloud-phase2/gmail-outreach-apps-script.js"
+      - "cloud-phase2/gmail-outreach-appsscript.json"
       - "cloud-phase2/schema.sql"
       - ".github/workflows/validate-cloud-phase2.yml"
 
