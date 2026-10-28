@@ -112,3 +112,60 @@ CREATE TABLE IF NOT EXISTS food_order_drafts (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+-- Outreach campaign setup and status; sender_email is the connected Gmail account.
+CREATE TABLE IF NOT EXISTS outreach_campaigns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id TEXT NOT NULL,
+  product TEXT NOT NULL DEFAULT '',
+  target_audience TEXT NOT NULL DEFAULT '',
+  value_proposition TEXT NOT NULL DEFAULT '',
+  sender_name TEXT NOT NULL DEFAULT '',
+  sender_email TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'setup',
+  setup_step TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_outreach_campaigns_chat_status
+  ON outreach_campaigns (chat_id, status, id);
+
+-- User-entered business prospects only. No scraped contact lists or credentials.
+CREATE TABLE IF NOT EXISTS outreach_prospects (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  campaign_id INTEGER NOT NULL,
+  chat_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  contact_name TEXT NOT NULL DEFAULT '',
+  company TEXT NOT NULL DEFAULT '',
+  relevance_context TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'new',
+  draft_subject TEXT,
+  draft_body TEXT,
+  gmail_thread_id TEXT,
+  gmail_message_id TEXT,
+  last_rfc822_message_id TEXT,
+  sent_at TEXT,
+  followup_due_at TEXT,
+  followup_sent_at TEXT,
+  replied_at TEXT,
+  reply_from TEXT,
+  reply_subject TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (campaign_id, email)
+);
+CREATE INDEX IF NOT EXISTS idx_outreach_prospects_status_due
+  ON outreach_prospects (status, followup_due_at);
+CREATE INDEX IF NOT EXISTS idx_outreach_prospects_chat_status
+  ON outreach_prospects (chat_id, status, id);
+
+-- Email suppression list applies across campaigns for this Telegram user.
+CREATE TABLE IF NOT EXISTS outreach_suppressions (
+  chat_id TEXT NOT NULL,
+  email TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (chat_id, email)
+);
