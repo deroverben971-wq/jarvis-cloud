@@ -5,6 +5,9 @@ on:
     paths:
       - "cloud-phase2/src/index.js"
       - "cloud-phase2/google-calendar-apps-script.js"
+      - "cloud-phase2/gmail-outreach-apps-script.js"
+      - "cloud-phase2/gmail-outreach-apps-script.js"
+      - "cloud-phase2/gmail-outreach-appsscript.json"
       - "cloud-phase2/appsscript.json"
       - "cloud-phase2/schema.sql"
       - ".github/workflows/validate-cloud-phase2.yml"
@@ -38,6 +41,12 @@ jobs:
           node --check /tmp/google-calendar-apps-script.js
       - name: Validate Apps Script manifest JSON
         run: python -m json.tool cloud-phase2/appsscript.json > /dev/null
+      - name: Check Gmail outreach Apps Script JavaScript syntax
+        run: |
+          cp cloud-phase2/gmail-outreach-apps-script.js /tmp/gmail-outreach-apps-script.js
+          node --check /tmp/gmail-outreach-apps-script.js
+      - name: Validate Gmail outreach Apps Script manifest JSON
+        run: python -m json.tool cloud-phase2/gmail-outreach-appsscript.json > /dev/null
       - name: Validate D1 schema SQL with SQLite
         run: |
           python - <<'PY'
