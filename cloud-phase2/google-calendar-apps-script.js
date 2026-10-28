@@ -138,7 +138,7 @@ function doPost(e) {
         return jsonOutput({ ok: false, error: "The event changed after confirmation was prepared. Search again before deleting." });
       }
 
-      Calendar.Events.delete(CALENDAR_ID, eventId);
+      Calendar.Events.remove(CALENDAR_ID, eventId);
       return jsonOutput({
         ok: true,
         deletedEvent: { title: actualTitle, start: actualStart }
