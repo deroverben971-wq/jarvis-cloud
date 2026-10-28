@@ -14,6 +14,9 @@ const HELP = [
   "/calendar — list the next 7 days",
   "/event YYYY-MM-DD HH:MM duration title — add an event (Manila time)",
   "/alarm YYYY-MM-DD HH:MM title — Calendar popup alert 5 minutes early (not an Android Clock alarm)",
+  "/deleteevent title — find matching events and request confirmation before deleting",
+  "/confirmdelete CODE — delete the exact event after checking its details",
+  "/canceldelete CODE — cancel a pending deletion confirmation",
   "",
   "PHONE CALLS (optional; disabled by default and may cost money)",
   "/callme message — request an immediate phone call",
@@ -228,6 +231,9 @@ function isCloudCommand(message) {
     text === "/remind" || text.startsWith("/remind ") || text === "/cancel" || text.startsWith("/cancel ") ||
     text === "/remindcall" || text.startsWith("/remindcall ") ||
     text === "/calendar" || text === "/event" || text.startsWith("/event ") ||
+    text === "/deleteevent" || text.startsWith("/deleteevent ") ||
+    text === "/confirmdelete" || text.startsWith("/confirmdelete ") ||
+    text === "/canceldelete" || text.startsWith("/canceldelete ") ||
     text === "/alarm" || text.startsWith("/alarm ") ||
     text === "/callme" || text.startsWith("/callme ") ||
     text.startsWith("/remember ") || text === "/remember" || text === "/memories" ||
@@ -262,6 +268,104 @@ async function handleMessage(env, message) {
   }
   if (text === "/reminders" || text === "show my reminders" || text === "list reminders") {
     await showReminders(env, chatId, false);
+    return;
+  }
+
+  if (text === "/deleteevent" || text.startsWith("/deleteevent ")) {
+    const query = raw.slice("/deleteevent".length).trim();
+    if (query.length < 2 || query.length > 100) {
+      await sendText(env, chatId, "Use: /deleteevent event title\nExample: /deleteevent JARVIS calendar test\nI will show matching events and ask you to confirm before deleting anything.");
+      return;
+    }
+    const result = await callGoogleCalendar(env, { action: "search_events", query: query });
+    if (!result.ok) {
+      await sendText(env, chatId, result.setupMissing
+        ? "📅 Google Calendar isn't connected yet. No event was deleted."
+        : "📅 I couldn't search Google Calendar: " + result.error);
+      return;
+    }
+    const events = (result.events || []).slice(0, 5);
+    if (!events.length) {
+      await sendText(env, chatId, "🔎 I couldn't find a matching event in your Google Calendar. Nothing was deleted. Try /deleteevent followed by more of the event title.");
+      return;
+    }
+
+    const now = new Date();
+    const createdAt = now.toISOString();
+    const expiresAt = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
+    const lines = [];
+    for (const event of events) {
+      if (!event.id || !event.start) continue;
+      const code = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
+      const title = String(event.title || "(Untitled event)").slice(0, 160);
+      const start = String(event.start);
+      await env.DB.prepare(
+        "INSERT INTO pending_calendar_deletions (confirmation_code, chat_id, event_id, event_title, event_start, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      ).bind(code, chatId, String(event.id), title, start, createdAt, expiresAt).run();
+      const when = event.allDay || /^\d{4}-\d{2}-\d{2}$/.test(start)
+        ? "All day " + start.slice(0, 10)
+        : formatManila(start);
+      lines.push("• " + title + "\n  When: " + when + "\n  Confirm this exact event with: /confirmdelete " + code);
+    }
+    if (!lines.length) {
+      await sendText(env, chatId, "I found a calendar result but couldn't prepare a safe confirmation. Nothing was deleted.");
+      return;
+    }
+    await sendText(env, chatId,
+      "🔎 MATCHING GOOGLE CALENDAR EVENTS\n\n" + lines.join("\n\n") +
+      "\n\n⚠️ Nothing has been deleted. Confirmation codes expire in 10 minutes. Use /canceldelete CODE to cancel a code.");
+    return;
+  }
+
+  if (text === "/confirmdelete" || text.startsWith("/confirmdelete ")) {
+    const match = /^\/confirmdelete\s+([A-F0-9]{8})$/i.exec(raw);
+    if (!match) {
+      await sendText(env, chatId, "Use /confirmdelete CODE exactly as shown in the event match message. This deletes that one event only.");
+      return;
+    }
+    const code = match[1].toUpperCase();
+    const now = new Date().toISOString();
+    const pending = await env.DB.prepare(
+      "SELECT confirmation_code, event_id, event_title, event_start FROM pending_calendar_deletions WHERE confirmation_code = ? AND chat_id = ? AND expires_at > ? AND consumed_at IS NULL"
+    ).bind(code, chatId, now).first();
+    if (!pending) {
+      await sendText(env, chatId, "That confirmation code is invalid, already used, or expired. Search again with /deleteevent event title.");
+      return;
+    }
+    const result = await callGoogleCalendar(env, {
+      action: "delete_event",
+      eventId: pending.event_id,
+      expectedTitle: pending.event_title,
+      expectedStart: pending.event_start
+    });
+    if (!result.ok) {
+      await sendText(env, chatId, "📅 I couldn't delete that event: " + result.error + "\nNo successful deletion was confirmed. You can search again with /deleteevent.");
+      return;
+    }
+    await env.DB.prepare(
+      "UPDATE pending_calendar_deletions SET consumed_at = ? WHERE chat_id = ? AND event_id = ? AND consumed_at IS NULL"
+    ).bind(now, chatId, pending.event_id).run();
+    const when = /^\d{4}-\d{2}-\d{2}$/.test(String(pending.event_start))
+      ? "All day " + String(pending.event_start).slice(0, 10)
+      : formatManila(pending.event_start);
+    await sendText(env, chatId,
+      "✅ Google Calendar event deleted.\nTitle: " + pending.event_title + "\nWhen: " + when);
+    return;
+  }
+
+  if (text === "/canceldelete" || text.startsWith("/canceldelete ")) {
+    const match = /^\/canceldelete\s+([A-F0-9]{8})$/i.exec(raw);
+    if (!match) {
+      await sendText(env, chatId, "Use /canceldelete CODE to cancel a pending deletion confirmation.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const result = await env.DB.prepare(
+      "UPDATE pending_calendar_deletions SET consumed_at = ? WHERE confirmation_code = ? AND chat_id = ? AND consumed_at IS NULL"
+    ).bind(now, match[1].toUpperCase(), chatId).run();
+    await sendText(env, chatId, result.meta?.changes
+      ? "✅ Deletion confirmation cancelled. The calendar event was not deleted."
+      : "That confirmation code was not found or was already used. The calendar event was not deleted by this command.");
     return;
   }
 

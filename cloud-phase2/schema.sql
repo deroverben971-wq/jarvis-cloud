@@ -84,3 +84,18 @@ CREATE TABLE IF NOT EXISTS phone_call_reminders (
 
 CREATE INDEX IF NOT EXISTS idx_phone_call_reminders_status
   ON phone_call_reminders (status, reminder_id);
+
+-- Short-lived confirmation tokens for safe, user-confirmed Google Calendar deletion.
+CREATE TABLE IF NOT EXISTS pending_calendar_deletions (
+  confirmation_code TEXT PRIMARY KEY,
+  chat_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  event_title TEXT NOT NULL,
+  event_start TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_calendar_deletions_chat_expiry
+  ON pending_calendar_deletions (chat_id, expires_at, consumed_at);

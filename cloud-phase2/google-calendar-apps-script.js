@@ -51,6 +51,39 @@ function doPost(e) {
       return jsonOutput({ ok: true, calendar: CALENDAR_ID, events: events });
     }
 
+    if (action === "search_events") {
+      const query = String(body.query || "").trim().slice(0, 100);
+      if (query.length < 2) {
+        return jsonOutput({ ok: false, error: "Search query must be at least 2 characters" });
+      }
+      const now = Date.now();
+      const start = new Date(now - 365 * 24 * 60 * 60 * 1000);
+      const end = new Date(now + 365 * 24 * 60 * 60 * 1000);
+      const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+      const result = Calendar.Events.list(CALENDAR_ID, {
+        timeMin: start.toISOString(),
+        timeMax: end.toISOString(),
+        q: query,
+        singleEvents: true,
+        orderBy: "startTime",
+        maxResults: 250
+      });
+      const events = (result.items || []).filter(function (event) {
+        const title = String(event.summary || "(Untitled event)").toLowerCase();
+        return terms.every(function (term) { return title.indexOf(term) !== -1; });
+      }).slice(0, 5).map(function (event) {
+        return {
+          id: event.id,
+          title: event.summary || "(Untitled event)",
+          start: event.start.dateTime || event.start.date,
+          end: event.end.dateTime || event.end.date,
+          location: event.location || "",
+          allDay: !event.start.dateTime
+        };
+      });
+      return jsonOutput({ ok: true, calendar: CALENDAR_ID, events: events });
+    }
+
     if (action === "create_event") {
       const title = String(body.title || "").trim().slice(0, 160);
       const description = String(body.description || "").trim().slice(0, 1000);
@@ -87,6 +120,28 @@ function doPost(e) {
           start: event.start.dateTime || event.start.date,
           end: event.end.dateTime || event.end.date
         }
+      });
+    }
+
+    if (action === "delete_event") {
+      const eventId = String(body.eventId || "").trim().slice(0, 256);
+      const expectedTitle = String(body.expectedTitle || "").trim().slice(0, 160);
+      const expectedStart = String(body.expectedStart || "").trim();
+      if (!eventId || !expectedTitle || !expectedStart) {
+        return jsonOutput({ ok: false, error: "Missing event confirmation details" });
+      }
+
+      const existing = Calendar.Events.get(CALENDAR_ID, eventId);
+      const actualTitle = existing.summary || "(Untitled event)";
+      const actualStart = existing.start.dateTime || existing.start.date;
+      if (actualTitle !== expectedTitle || actualStart !== expectedStart) {
+        return jsonOutput({ ok: false, error: "The event changed after confirmation was prepared. Search again before deleting." });
+      }
+
+      Calendar.Events.remove(CALENDAR_ID, eventId);
+      return jsonOutput({
+        ok: true,
+        deletedEvent: { title: actualTitle, start: actualStart }
       });
     }
 

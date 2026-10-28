@@ -8,6 +8,9 @@ JARVIS receives Telegram messages through a Cloudflare Worker and uses Workers A
 - /calendar — list events for the next 7 days from your Google Calendar default calendar.
 - /event YYYY-MM-DD HH:MM duration title — create a Google Calendar event; duration 15–480 minutes. All times are Asia/Manila.
 - /alarm YYYY-MM-DD HH:MM title — create a Google Calendar event with a popup alert 5 minutes before it. This is not a native Android Clock alarm. Google Calendar must be signed in and synced on Android, with notifications allowed.
+- /deleteevent title — search matching calendar events from the past year through the next year; JARVIS displays each match and a short-lived confirmation code. No event is deleted by this command alone.
+- /confirmdelete CODE — delete only the exact event saved for that code after checking the title and start time again. Codes expire after 10 minutes.
+- /canceldelete CODE — cancel a pending confirmation without deleting the event.
 - /schedule — reminders due today.
 - /reminders — list upcoming JARVIS reminders.
 - /remind YYYY-MM-DD HH:MM task — free Telegram reminder.
@@ -18,7 +21,7 @@ JARVIS receives Telegram messages through a Cloudflare Worker and uses Workers A
 
 ## Before deploying this integration update
 
-After merging the integration update, run the complete contents of cloud-phase2/schema.sql in Cloudflare D1 Console before deploying the new Worker source. The schema uses CREATE TABLE IF NOT EXISTS, so it preserves existing reminders, chat history, facts, and bridge data while adding the optional phone-call metadata tables. Keep the existing Telegram webhook and all current secret values.
+The calendar-delete feature adds only the `pending_calendar_deletions` D1 table and its index. After merging, run the new `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` statements at the bottom of `cloud-phase2/schema.sql` in Cloudflare D1 Console before deploying the Worker source. This preserves all existing reminders, chat history, facts, and bridge data. Keep the existing Telegram webhook and all current secret values.
 
 ## Google Calendar connector (free)
 
@@ -51,7 +54,7 @@ https://developers.google.com/apps-script/guides/web
 12. Save/deploy the Worker. Keep existing DB, AI, and Telegram/bridge secrets unchanged. Update the Worker source with cloud-phase2/src/index.js after this feature branch is merged and reviewed.
 13. Test /calendar in Telegram, then create a low-stakes future event with /event YYYY-MM-DD HH:MM 30 JARVIS calendar test. Check it appears on your Android Google Calendar app; delete the test event if desired.
 
-The connector can list the next 7 days and create events in the default calendar. It does not yet parse arbitrary natural-language requests into calendar events; use the explicit /event command to avoid accidental calendar writes.
+The connector can list the next 7 days, create events, and search event titles across the past year and next year. Deletion is a two-step process: `/deleteevent title` finds matches and issues a 10-minute code; `/confirmdelete CODE` deletes only the matching event after the connector verifies its title and start time have not changed; `/canceldelete CODE` cancels it. Use explicit commands rather than natural-language deletion requests to avoid accidental calendar changes.
 
 ## Actual phone calls (optional; not free to run reliably)
 
