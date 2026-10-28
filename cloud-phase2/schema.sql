@@ -99,3 +99,16 @@ CREATE TABLE IF NOT EXISTS pending_calendar_deletions (
 
 CREATE INDEX IF NOT EXISTS idx_pending_calendar_deletions_chat_expiry
   ON pending_calendar_deletions (chat_id, expires_at, consumed_at);
+
+-- One user-owned food order draft; contains no account, address, or payment credentials.
+CREATE TABLE IF NOT EXISTS food_order_drafts (
+  chat_id TEXT PRIMARY KEY,
+  request_text TEXT NOT NULL DEFAULT '',
+  area TEXT NOT NULL DEFAULT '',
+  budget_amount REAL,
+  items_json TEXT NOT NULL DEFAULT '[]',
+  grab_quote_json TEXT,
+  foodpanda_quote_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
