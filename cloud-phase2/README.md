@@ -58,6 +58,14 @@ https://developers.google.com/apps-script/guides/web
 
 The connector can list the next 7 days, create events, and search event titles across the past year and next year. Deletion is a two-step process: `/deleteevent title` finds matches and issues a 10-minute code; `/confirmdelete CODE` deletes only the matching event after the connector verifies its title and start time have not changed; `/canceldelete CODE` cancels it. Use explicit commands rather than natural-language deletion requests to avoid accidental calendar changes.
 
+## Gmail outreach (approval-first, low volume)
+
+The separate Apps Script connector in `gmail-outreach-apps-script.js` uses Gmail Advanced Service with the narrow `gmail.send` and `gmail.metadata` scopes. It sends only after `/outreach send ID`, checks reply headers only, and never forwards email bodies to Telegram. Configure Script Property `JARVIS_GMAIL_SHARED_SECRET`; set Cloudflare Worker variable `GMAIL_WEBAPP_URL` and secret `GMAIL_SHARED_SECRET`. Deploy this separate Apps Script Web App before using `/outreach start`.
+
+Campaign setup is conversational: JARVIS asks what product/service is offered, who it helps, the truthful benefit, and the sender name. Add one appropriate business contact at a time using `/outreach add email@business.com | name | company | why relevant`; no bulk list import or scraping. Use `/outreach draft ID` to preview an AI-written message; only `/outreach send ID` sends it. One follow-up is scheduled after four days only if the campaign remains active and reply polling has succeeded. Any detected reply stops follow-ups and triggers a Telegram notification. Polling runs about every five minutes; schedules are approximate. This first version caps sending attempts at three per rolling 24 hours and 25 prospects per campaign. Use `/outreach pause`, `/outreach stop ID`, `/outreach optout EMAIL`, and `/outreach close` to stop automation. Uncertain send outcomes require manual review; no automatic resend occurs.
+
+Only contact appropriate business prospects you have a legitimate reason to contact. Do not scrape or bulk-import addresses. The email asks recipients to reply "No thanks" if they don't want further follow-up, and any detected reply stops follow-ups. Review applicable privacy/marketing requirements and have a parent/guardian review the campaign and connected email account before sending. Google Apps Script quotas vary and can change; this internal cap is intentionally much lower than published quotas: https://developers.google.com/apps-script/guides/services/quotas
+
 ## Food-order preparation (no direct checkout)
 
 The `/food` commands keep a single draft in D1, including a general city/neighborhood, a PHP budget, requested items, and manually copied checkout estimates. `/food compare` compares the totals entered for GrabFood and foodpanda. The Worker does not connect to customer accounts, read live account-specific menus, put items in cart, or place an order. Users must finish address entry, verify item availability, recheck the total, and submit payment themselves in the official apps. Never store passwords, OTPs, payment information, or full delivery addresses in the draft. Official ordering links are `https://food.grab.com/ph/en/` and `https://www.foodpanda.ph/`. The platforms' publicly documented integrations are partner/merchant APIs rather than general consumer checkout APIs.
@@ -93,6 +101,6 @@ https://developers.cloudflare.com/workers-ai/platform/pricing/
 
 ## Memory and privacy
 
-Cloud AI stores conversation messages and saved facts in D1. /forgetme removes cloud chat history and cloud facts for the configured Telegram chat, but does not erase local C:\Users\noeld\JARVIS\jarvis_memory.db. Avoid saving passwords or other secrets as facts. Reminder tasks, conversation contents, and event titles are personal data; never commit them to this public repository.
+Cloud AI stores conversation messages and saved facts in D1. /forgetme removes cloud chat history and cloud facts for the configured Telegram chat, but does not erase local C:\Users\noeld\JARVIS\jarvis_memory.db. Avoid saving passwords or other secrets as facts. Reminder tasks, conversation contents, event titles, prospect contact details, email drafts, and reply metadata are personal data; never commit them to this public repository.
 
 Keep the existing Telegram webhook, DB binding, AI binding, and secrets. Updating Worker code does not require re-registering the webhook. The scheduled trigger * * * * * should remain enabled for reminders.
