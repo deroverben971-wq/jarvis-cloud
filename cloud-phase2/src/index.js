@@ -18,6 +18,17 @@ const HELP = [
   "/confirmdelete CODE — delete the exact event after checking its details",
   "/canceldelete CODE — cancel a pending deletion confirmation",
   "",
+  "FOOD ORDER PREPARATION",
+  "/food — show food-order commands and official ordering links",
+  "/food start what you want — start an order draft",
+  "/food area city or neighborhood — set general delivery area (not your street address)",
+  "/food budget amount — set budget in PHP",
+  "/food add item — add an item to your draft",
+  "/food quote | platform | restaurant | subtotal | delivery fee | other fees | discount | ETA — save checkout estimate",
+  "/food compare — compare saved GrabFood and foodpanda estimates",
+  "/food show — review the draft and official app links",
+  "/food clear — delete this draft only (no order is placed)",
+  "",
   "PHONE CALLS (optional; disabled by default and may cost money)",
   "/callme message — request an immediate phone call",
   "",
@@ -224,6 +235,343 @@ async function placePhoneCall(env, chatId, spokenText, purpose) {
   }
 }
 
+
+const FOOD_ORDER_LINKS = {
+  grab: "https://food.grab.com/ph/en/",
+  foodpanda: "https://www.foodpanda.ph/"
+};
+
+function formatPhp(amount) {
+  return "₱" + Number(amount).toLocaleString("en-PH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function parsePhpAmount(value) {
+  const cleaned = String(value || "").replace(/[₱,\s]/g, "");
+  if (!/^\d+(?:\.\d{1,2})?$/.test(cleaned)) return null;
+  const amount = Number(cleaned);
+  return Number.isFinite(amount) && amount >= 0 && amount <= 100000 ? amount : null;
+}
+
+async function getFoodDraft(env, chatId) {
+  return env.DB.prepare(
+    "SELECT chat_id, request_text, area, budget_amount, items_json, grab_quote_json, foodpanda_quote_json, created_at, updated_at FROM food_order_drafts WHERE chat_id = ?"
+  ).bind(String(chatId)).first();
+}
+
+async function requireFoodDraft(env, chatId) {
+  const draft = await getFoodDraft(env, chatId);
+  if (!draft) {
+    await sendText(env, chatId, "🍔 You don't have an order draft yet. Start with:\n/food start chicken meal under 300 pesos");
+    return null;
+  }
+  return draft;
+}
+
+function foodQuoteFromDraft(draft, platform) {
+  const field = platform === "grab" ? draft.grab_quote_json : draft.foodpanda_quote_json;
+  if (!field) return null;
+  try {
+    const quote = JSON.parse(field);
+    return quote && typeof quote === "object" ? quote : null;
+  } catch {
+    return null;
+  }
+}
+
+function foodQuoteTotal(quote) {
+  return Number(quote.subtotal) + Number(quote.deliveryFee) + Number(quote.otherFees) - Number(quote.discount);
+}
+
+function formatFoodQuote(label, quote) {
+  if (!quote) return label + ": no estimate saved yet.";
+  return label + " — " + String(quote.restaurant) +
+    "\n  Items: " + formatPhp(quote.subtotal) +
+    " | Delivery: " + formatPhp(quote.deliveryFee) +
+    " | Other fees: " + formatPhp(quote.otherFees) +
+    " | Discount: −" + formatPhp(quote.discount) +
+    "\n  Estimated total: " + formatPhp(foodQuoteTotal(quote)) +
+    (quote.eta ? "\n  ETA shown by app: " + String(quote.eta) : "");
+}
+
+function foodHelpText() {
+  return [
+    "🍔 JARVIS FOOD ORDER PREPARATION",
+    "",
+    "I can help organize your order and compare estimates you copy from the apps. I cannot see account-specific live menus, put items in the app cart, or submit an order for you. You finish checkout and payment yourself.",
+    "",
+    "1) Start a draft:",
+    "/food start Jollibee chicken meal under 300 pesos",
+    "2) Set a general area (city/neighborhood only; keep your exact address in the delivery app):",
+    "/food area Cainta",
+    "3) Set your budget:",
+    "/food budget 300",
+    "4) Add items:",
+    "/food add 2-piece chicken with rice",
+    "5) Open the official apps and copy the pre-checkout estimates:",
+    "GrabFood: " + FOOD_ORDER_LINKS.grab,
+    "foodpanda: " + FOOD_ORDER_LINKS.foodpanda,
+    "6) Save each estimate using the same basket/items in both apps:",
+    "/food quote | grab | Jollibee | 250 | 39 | 0 | 20 | 25 min",
+    "/food quote | foodpanda | Jollibee | 240 | 49 | 0 | 0 | 30 min",
+    "Fields: platform | restaurant | item subtotal | delivery fee | other fees | discount | ETA",
+    "7) Compare and review:",
+    "/food compare",
+    "/food show",
+    "",
+    "Commands: /food help, /food remove ITEM_NUMBER, /food clear",
+    "Don't share passwords, OTPs, payment details, or your full home address with JARVIS. No order is placed by these commands."
+  ].join("\n");
+}
+
+async function handleFoodCommand(env, chatId, raw) {
+  const rest = raw.replace(/^\/food(?:@\w+)?/i, "").trim();
+  const lower = rest.toLowerCase();
+
+  if (!lower || lower === "help") {
+    await sendText(env, chatId, foodHelpText());
+    return;
+  }
+
+  let match = /^start(?:\s+([\s\S]{1,250}))?$/i.exec(rest);
+  if (match) {
+    const requestText = String(match[1] || "").trim();
+    if (!requestText) {
+      await sendText(env, chatId, "Tell me what you want to eat when starting the draft.\nExample: /food start burger meal under 250 pesos");
+      return;
+    }
+    const existing = await getFoodDraft(env, chatId);
+    if (existing) {
+      await sendText(env, chatId, "You already have a food draft. Use /food show to review it or /food clear to remove that draft before starting a new one. Nothing has been ordered.");
+      return;
+    }
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      "INSERT INTO food_order_drafts (chat_id, request_text, area, budget_amount, items_json, grab_quote_json, foodpanda_quote_json, created_at, updated_at) VALUES (?, ?, '', NULL, '[]', NULL, NULL, ?, ?)"
+    ).bind(String(chatId), requestText, now, now).run();
+    await sendText(env, chatId,
+      "✅ Food order draft started.\nRequest: " + requestText +
+      "\n\nNext, use /food area CITY_OR_NEIGHBORHOOD and /food budget AMOUNT, then add items with /food add ITEM.\nNo order has been placed.");
+    return;
+  }
+
+  match = /^area\s+([\s\S]{2,100})$/i.exec(rest);
+  if (match) {
+    const draft = await requireFoodDraft(env, chatId);
+    if (!draft) return;
+    const area = match[1].trim();
+    if (/(\bunit\b|\bapartment\b|\bhouse\s*(?:no|number)?\b|\bbuilding\s*(?:no|number)?\b)/i.test(area) || /\b\d{2,}[A-Za-z]?(?:[-/]\w+)?\b/.test(area)) {
+      await sendText(env, chatId, "Please use only a general area such as a city or neighborhood. Enter your exact street address privately in GrabFood or foodpanda checkout, not in JARVIS.");
+      return;
+    }
+    const now = new Date().toISOString();
+    await env.DB.prepare("UPDATE food_order_drafts SET area = ?, updated_at = ? WHERE chat_id = ?")
+      .bind(area, now, String(chatId)).run();
+    await sendText(env, chatId, "📍 General delivery area saved: " + area + "\nKeep your full delivery address inside the official app only.");
+    return;
+  }
+
+  match = /^budget\s+(.+)$/i.exec(rest);
+  if (match) {
+    const draft = await requireFoodDraft(env, chatId);
+    if (!draft) return;
+    const amount = parsePhpAmount(match[1]);
+    if (amount === null || amount <= 0) {
+      await sendText(env, chatId, "Use a positive PHP amount, for example: /food budget 300");
+      return;
+    }
+    const now = new Date().toISOString();
+    await env.DB.prepare("UPDATE food_order_drafts SET budget_amount = ?, updated_at = ? WHERE chat_id = ?")
+      .bind(amount, now, String(chatId)).run();
+    await sendText(env, chatId, "💸 Budget saved: " + formatPhp(amount));
+    return;
+  }
+
+  match = /^add\s+([\s\S]{1,160})$/i.exec(rest);
+  if (match) {
+    const draft = await requireFoodDraft(env, chatId);
+    if (!draft) return;
+    let items;
+    try {
+      items = JSON.parse(draft.items_json || "[]");
+      if (!Array.isArray(items)) items = [];
+    } catch { items = []; }
+    if (items.length >= 12) {
+      await sendText(env, chatId, "This draft already has 12 lines. Use /food remove ITEM_NUMBER or /food clear before adding more.");
+      return;
+    }
+    const item = match[1].trim();
+    if (!item) {
+      await sendText(env, chatId, "Use /food add item name, for example: /food add 2-piece chicken with rice");
+      return;
+    }
+    items.push(item);
+    const now = new Date().toISOString();
+    await env.DB.prepare("UPDATE food_order_drafts SET items_json = ?, updated_at = ? WHERE chat_id = ?")
+      .bind(JSON.stringify(items), now, String(chatId)).run();
+    await sendText(env, chatId, "✅ Added to your draft: " + item + "\nUse /food show to review your basket notes. No order has been placed.");
+    return;
+  }
+
+  match = /^remove\s+(\d{1,2})$/i.exec(rest);
+  if (match) {
+    const draft = await requireFoodDraft(env, chatId);
+    if (!draft) return;
+    let items;
+    try {
+      items = JSON.parse(draft.items_json || "[]");
+      if (!Array.isArray(items)) items = [];
+    } catch { items = []; }
+    const index = Number(match[1]) - 1;
+    if (!Number.isInteger(index) || index < 0 || index >= items.length) {
+      await sendText(env, chatId, "That item number wasn't found. Use /food show to see numbered items.");
+      return;
+    }
+    const removed = items.splice(index, 1)[0];
+    const now = new Date().toISOString();
+    await env.DB.prepare("UPDATE food_order_drafts SET items_json = ?, updated_at = ? WHERE chat_id = ?")
+      .bind(JSON.stringify(items), now, String(chatId)).run();
+    await sendText(env, chatId, "🗑️ Removed draft item: " + removed + "\nNo app order was changed.");
+    return;
+  }
+
+  match = /^quote\s+\|\s*([\s\S]+)$/i.exec(rest);
+  if (match) {
+    const draft = await requireFoodDraft(env, chatId);
+    if (!draft) return;
+    const fields = match[1].split("|").map(field => field.trim());
+    if (fields.length < 6 || fields.length > 7) {
+      await sendText(env, chatId, "Quote format:\n/food quote | grab | restaurant | item subtotal | delivery fee | other fees | discount | ETA\nCopy the estimates shown before paying. Example:\n/food quote | grab | Jollibee | 250 | 39 | 0 | 20 | 25 min");
+      return;
+    }
+    const platform = String(fields[0] || "").toLowerCase();
+    const restaurant = String(fields[1] || "").slice(0, 100);
+    const subtotal = parsePhpAmount(fields[2]);
+    const deliveryFee = parsePhpAmount(fields[3]);
+    const otherFees = parsePhpAmount(fields[4]);
+    const discount = parsePhpAmount(fields[5]);
+    const eta = fields.length >= 7 ? String(fields[6]).slice(0, 40) : "";
+    if (!["grab", "grabfood", "foodpanda", "panda"].includes(platform) || !restaurant ||
+        subtotal === null || deliveryFee === null || otherFees === null || discount === null) {
+      await sendText(env, chatId, "I couldn't read that quote. Use:\n/food quote | grab | restaurant | subtotal | delivery fee | other fees | discount | ETA\nUse numbers copied from the app before checkout; you can use 0 for a fee that is shown as zero.");
+      return;
+    }
+    const total = subtotal + deliveryFee + otherFees - discount;
+    if (discount > subtotal + deliveryFee + otherFees || total < 0) {
+      await sendText(env, chatId, "The discount is larger than the listed costs. Please check those amounts and enter the quote again.");
+      return;
+    }
+    const normalizedPlatform = ["grab", "grabfood"].includes(platform) ? "grab" : "foodpanda";
+    const quote = {
+      platform: normalizedPlatform,
+      restaurant,
+      subtotal,
+      deliveryFee,
+      otherFees,
+      discount,
+      eta,
+      total,
+      enteredAt: new Date().toISOString()
+    };
+    const now = new Date().toISOString();
+    const column = normalizedPlatform === "grab" ? "grab_quote_json" : "foodpanda_quote_json";
+    await env.DB.prepare("UPDATE food_order_drafts SET " + column + " = ?, updated_at = ? WHERE chat_id = ?")
+      .bind(JSON.stringify(quote), now, String(chatId)).run();
+    await sendText(env, chatId, "✅ Saved " + (normalizedPlatform === "grab" ? "GrabFood" : "foodpanda") +
+      " estimate for " + restaurant + ".\nEstimated total: " + formatPhp(total) +
+      (eta ? "\nETA shown by app: " + eta : "") +
+      "\nThis is based on the amounts you entered, not a live price check.");
+    return;
+  }
+
+  if (lower === "compare") {
+    const draft = await requireFoodDraft(env, chatId);
+    if (!draft) return;
+    const grab = foodQuoteFromDraft(draft, "grab");
+    const panda = foodQuoteFromDraft(draft, "foodpanda");
+    if (!grab && !panda) {
+      await sendText(env, chatId, "I don't have checkout estimates yet. Open both official apps and use the same restaurant and items, then copy the pre-payment amounts with /food quote:\n" + FOOD_ORDER_LINKS.grab + "\n" + FOOD_ORDER_LINKS.foodpanda);
+      return;
+    }
+    if (!grab || !panda) {
+      const saved = grab || panda;
+      const platform = grab ? "GrabFood" : "foodpanda";
+      await sendText(env, chatId, formatFoodQuote(platform, saved) +
+        "\n\nI need the other app's quote to compare totals fairly. Use the same items and restaurant, then save the other estimate with /food quote. Links:\n" +
+        FOOD_ORDER_LINKS.grab + "\n" + FOOD_ORDER_LINKS.foodpanda);
+      return;
+    }
+    const grabTotal = foodQuoteTotal(grab);
+    const pandaTotal = foodQuoteTotal(panda);
+    const cheaper = Math.abs(grabTotal - pandaTotal) < 0.005
+      ? "The estimated totals are tied."
+      : (grabTotal < pandaTotal
+          ? "GrabFood is cheaper by " + formatPhp(pandaTotal - grabTotal) + "."
+          : "foodpanda is cheaper by " + formatPhp(grabTotal - pandaTotal) + ".");
+    const budget = draft.budget_amount === null || draft.budget_amount === undefined
+      ? ""
+      : "\nBudget: " + formatPhp(draft.budget_amount) +
+        "\nGrabFood: " + (grabTotal <= Number(draft.budget_amount) ? "within budget" : "over budget") +
+        "\nfoodpanda: " + (pandaTotal <= Number(draft.budget_amount) ? "within budget" : "over budget");
+    await sendText(env, chatId,
+      "⚖️ FOOD ORDER ESTIMATE COMPARISON\n\n" +
+      formatFoodQuote("GrabFood", grab) + "\n\n" +
+      formatFoodQuote("foodpanda", panda) + "\n\n" +
+      cheaper + budget +
+      "\n\nCheck both quotes contain the same items and quantities. Totals are based only on amounts you copied from each app; availability, final fees, and discounts can change before checkout.\n" +
+      "GrabFood: " + FOOD_ORDER_LINKS.grab + "\nfoodpanda: " + FOOD_ORDER_LINKS.foodpanda);
+    return;
+  }
+
+  if (lower === "show" || lower === "checkout" || lower === "review") {
+    const draft = await requireFoodDraft(env, chatId);
+    if (!draft) return;
+    let items;
+    try {
+      items = JSON.parse(draft.items_json || "[]");
+      if (!Array.isArray(items)) items = [];
+    } catch { items = []; }
+    const grab = foodQuoteFromDraft(draft, "grab");
+    const panda = foodQuoteFromDraft(draft, "foodpanda");
+    const lines = [
+      "🍔 YOUR FOOD ORDER DRAFT",
+      "What you want: " + (draft.request_text || "(not specified)"),
+      "General area: " + (draft.area || "(not set)"),
+      "Budget: " + (draft.budget_amount === null || draft.budget_amount === undefined ? "(not set)" : formatPhp(draft.budget_amount)),
+      "",
+      "Items:",
+      ...(items.length ? items.map((item, index) => (index + 1) + ". " + item) : ["(none added yet)"]),
+      "",
+      formatFoodQuote("GrabFood", grab),
+      "",
+      formatFoodQuote("foodpanda", panda),
+      "",
+      "Official ordering pages:",
+      "GrabFood: " + FOOD_ORDER_LINKS.grab,
+      "foodpanda: " + FOOD_ORDER_LINKS.foodpanda,
+      "",
+      "Review the final cart, address, fees, discounts, and payment in the app. JARVIS has not placed an order."
+    ];
+    await sendText(env, chatId, lines.join("\n"));
+    return;
+  }
+
+  if (lower === "clear") {
+    const existing = await getFoodDraft(env, chatId);
+    if (!existing) {
+      await sendText(env, chatId, "There is no food draft to clear. No order was placed.");
+      return;
+    }
+    await env.DB.prepare("DELETE FROM food_order_drafts WHERE chat_id = ?").bind(String(chatId)).run();
+    await sendText(env, chatId, "🗑️ Food draft cleared. This only removed JARVIS's saved draft; it did not change or cancel any order in GrabFood or foodpanda.");
+    return;
+  }
+
+  await sendText(env, chatId, foodHelpText());
+}
+
 function isCloudCommand(message) {
   const text = (message.text || "").trim().toLowerCase();
   return text === "/start" || text === "/help" || text === "help" ||
@@ -234,6 +582,7 @@ function isCloudCommand(message) {
     text === "/deleteevent" || text.startsWith("/deleteevent ") ||
     text === "/confirmdelete" || text.startsWith("/confirmdelete ") ||
     text === "/canceldelete" || text.startsWith("/canceldelete ") ||
+    text === "/food" || text.startsWith("/food ") ||
     text === "/alarm" || text.startsWith("/alarm ") ||
     text === "/callme" || text.startsWith("/callme ") ||
     text.startsWith("/remember ") || text === "/remember" || text === "/memories" ||
@@ -260,6 +609,10 @@ async function handleMessage(env, message) {
 
   if (text === "/start" || text === "/help" || text === "help") {
     await sendText(env, chatId, HELP);
+    return;
+  }
+  if (text === "/food" || text.startsWith("/food ")) {
+    await handleFoodCommand(env, chatId, raw);
     return;
   }
   if (text === "/schedule" || /what('?s| is) my schedule (for )?today\??/.test(text) || /what do i have today\??/.test(text)) {
