@@ -11,6 +11,7 @@ on:
       - "cloud-phase2/appsscript.json"
       - "cloud-phase2/schema.sql"
       - ".github/workflows/validate-cloud-phase2.yml"
+      - ".github/workflows/deploy-cloud-phase2.yml"
   push:
     branches:
       - main
@@ -22,6 +23,7 @@ on:
       - "cloud-phase2/gmail-outreach-appsscript.json"
       - "cloud-phase2/schema.sql"
       - ".github/workflows/validate-cloud-phase2.yml"
+      - ".github/workflows/deploy-cloud-phase2.yml"
 
 permissions:
   contents: read

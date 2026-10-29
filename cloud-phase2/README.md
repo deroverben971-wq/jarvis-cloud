@@ -24,6 +24,19 @@ JARVIS receives Telegram messages through a Cloudflare Worker and uses Workers A
 
 The calendar-delete feature adds only the `pending_calendar_deletions` D1 table and its index. After merging, run the new `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` statements at the bottom of `cloud-phase2/schema.sql` in Cloudflare D1 Console before deploying the Worker source. This preserves all existing reminders, chat history, facts, and bridge data. Keep the existing Telegram webhook and all current secret values.
 
+## Manual Cloudflare deployment from GitHub Actions
+
+The repository includes a manual, guarded deployment workflow at `.github/workflows/deploy-cloud-phase2.yml`. It does not deploy on pushes or pull requests. To enable it:
+
+1. In Cloudflare, create a narrowly scoped API token for editing **only the existing** `jarvis-cloud-phase2` Worker, following Cloudflare's current token permissions guidance: https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/ and https://developers.cloudflare.com/workers/authorization/.
+2. In GitHub repository Settings → Secrets and variables → Actions, add repository secret `CLOUDFLARE_API_TOKEN` and repository variable `CLOUDFLARE_ACCOUNT_ID`. Never put the token in a repository file, issue, or chat message.
+3. From Actions, choose **Deploy JARVIS Cloud Phase 2**, select branch `main`, and enter the exact confirmation phrase requested by the workflow. The workflow validates the code, Wrangler configuration, and schema before deployment.
+4. After deployment, confirm the production Cron Trigger in the Cloudflare dashboard.
+
+This deployment workflow preserves dashboard variables via `keep_vars: true`, and Wrangler does not delete existing encrypted Worker secrets unless explicitly instructed. It does not configure the Gmail connector automatically: after the Apps Script Web App is reviewed and deployed, configure Worker variable `GMAIL_WEBAPP_URL` and secret `GMAIL_SHARED_SECRET` in Cloudflare, ensuring the secret matches the Apps Script Script Property. Keep that secret private.
+
+The workflow only deploys the Worker; it does not deploy Apps Script, authorize Gmail, create prospects, or send email. The Gmail Web App and Gmail authorization remain separate setup steps.
+
 ## Google Calendar connector (free)
 
 This connector uses the Advanced Google Calendar API from Google Apps Script and an event-only OAuth scope. Google documents explicit scope configuration at:

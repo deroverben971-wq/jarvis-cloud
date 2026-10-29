@@ -1,0 +1,90 @@
+name: Deploy JARVIS Cloud Phase 2
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_deploy:
+        description: 'Type DEPLOY PRODUCTION WORKER to authorize a production deployment'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jarvis-cloud-phase2-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main' && inputs.confirm_deploy == 'DEPLOY PRODUCTION WORKER'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate deployment configuration
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path("cloud-phase2/wrangler.jsonc").read_text(encoding="utf-8"))
+          assert config.get("name") == "jarvis-cloud-phase2", "Unexpected Worker name"
+          assert config.get("main") == "src/index.js", "Unexpected Worker entry point"
+          assert config.get("keep_vars") is True, "keep_vars must remain true"
+          assert config.get("ai", {}).get("binding") == "AI", "AI binding missing"
+          databases = config.get("d1_databases", [])
+          assert len(databases) == 1, "Expected exactly one D1 binding"
+          assert databases[0].get("binding") == "DB", "DB binding missing"
+          assert databases[0].get("database_name") == "jarvis-reminders", "Unexpected D1 database"
+          database_id = databases[0].get("database_id", "")
+          assert database_id and "REPLACE_WITH" not in database_id, "D1 database ID is still a placeholder"
+          assert database_id == "f585c748-f7ec-4e32-9191-8d4a4d5341fd", "D1 ID doesn't match the verified production database"
+          crons = config.get("triggers", {}).get("crons", [])
+          assert "* * * * *" in crons, "Minute Cron Trigger missing"
+          print("Wrangler configuration checks passed.")
+          PY
+          node --check cloud-phase2/src/index.js
+          node --check cloud-phase2/gmail-outreach-apps-script.js
+          python -m json.tool cloud-phase2/appsscript.json > /dev/null
+          python -m json.tool cloud-phase2/gmail-outreach-appsscript.json > /dev/null
+          python - <<'PY'
+          import sqlite3
+          from pathlib import Path
+          conn = sqlite3.connect(":memory:")
+          conn.executescript(Path("cloud-phase2/schema.sql").read_text(encoding="utf-8"))
+          print("D1 schema validation passed.")
+          PY
+
+      - name: Validate Wrangler bundle without deploying
+        run: npx --yes wrangler@4 deploy --dry-run --outdir /tmp/jarvis-cloud-dry-run --config cloud-phase2/wrangler.jsonc
+
+      - name: Check Cloudflare credentials are configured
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "Missing required GitHub Actions secret: CLOUDFLARE_API_TOKEN"
+            exit 1
+          fi
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "Missing required GitHub Actions variable: CLOUDFLARE_ACCOUNT_ID"
+            exit 1
+          fi
+          echo "Cloudflare credentials are present; values were not printed."
+
+      - name: Deploy Worker to Cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@4 deploy --config cloud-phase2/wrangler.jsonc
