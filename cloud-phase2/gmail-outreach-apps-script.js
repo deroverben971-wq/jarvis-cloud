@@ -28,7 +28,7 @@ function doPost(e) {
     if (action === "check_replies") return checkReplies_(body);
     return jsonOutput_({ ok: false, error: "Unknown action" });
   } catch (error) {
-    console.error("JARVIS Gmail bridge error: " + (error && error.message ? error.message : "unknown"));
+    console.error("JARVIS Gmail bridge request failed:", error && error.name ? String(error.name).slice(0, 80) : "unknown error");
     return jsonOutput_({ ok: false, error: "Gmail request failed" });
   }
 }
