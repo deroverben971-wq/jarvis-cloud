@@ -43,6 +43,7 @@ const HELP = [
   "/history — show recent cloud conversation history",
   "/forgetme — erase cloud conversation history and saved facts",
   "",
+  "/status — check JARVIS cloud, reminders, Calendar, Gmail, and bridge configuration",
   "/help — show this message",
   "",
   "Examples: /remind 2026-10-25 18:00 Finish homework",
@@ -103,6 +104,49 @@ function formatManila(iso) {
     timeZone: "Asia/Manila", weekday: "short", month: "short", day: "numeric",
     hour: "numeric", minute: "2-digit", hour12: true
   }).format(new Date(iso));
+}
+
+async function handleSystemStatus(env, chatId) {
+  const lines = [
+    "🩺 JARVIS SYSTEM STATUS",
+    "Telegram: ✅ This authorized chat reached the Worker.",
+    "Cloud AI binding: " + (env.AI ? "✅ Present (live inference not tested by this check)" : "❌ Missing"),
+    "D1 reminder storage: Checking..."
+  ];
+
+  try {
+    await env.DB.prepare("SELECT COUNT(*) AS total FROM reminders").first();
+    lines[3] = "D1 reminder storage: ✅ Query succeeded";
+  } catch (error) {
+    console.error("Status check could not query reminders:", error?.message || "unknown error");
+    lines[3] = "D1 reminder storage: ❌ Query failed; check the D1 binding and schema";
+  }
+
+  if (!env.GOOGLE_CALENDAR_WEBAPP_URL || !env.GOOGLE_CALENDAR_SHARED_SECRET) {
+    lines.push("Google Calendar: ❌ Connector URL or secret not configured");
+  } else {
+    const calendar = await callGoogleCalendar(env, { action: "list_events", days: 1 });
+    lines.push(calendar.ok
+      ? "Google Calendar: ✅ Read-only check succeeded (" + (calendar.events || []).length + " event(s) in the next day)"
+      : "Google Calendar: ❌ Connection/permission check failed — " + String(calendar.error || "unknown error").slice(0, 150));
+  }
+
+  if (!env.GMAIL_WEBAPP_URL || !env.GMAIL_SHARED_SECRET) {
+    lines.push("Gmail: ❌ Connector URL or secret not configured");
+  } else {
+    const gmail = await callGmailBridge(env, { action: "profile" });
+    lines.push(gmail.ok && validEmailAddress(gmail.emailAddress)
+      ? "Gmail: ✅ Connected as " + String(gmail.emailAddress).slice(0, 254)
+      : "Gmail: ❌ Profile/authorization check failed — " + String(gmail.error || "invalid Gmail profile").slice(0, 150));
+  }
+
+  lines.push("Local Ollama bridge: " + (env.JARVIS_BRIDGE_SECRET
+    ? "🔑 Shared-secret setting exists; this does not prove the Windows PC is online"
+    : "❌ Shared-secret setting missing"));
+  lines.push("Scheduled reminders: production Cron Trigger must be verified in Cloudflare; this command cannot inspect dashboard triggers.");
+  lines.push("This is a configuration check, not a guarantee of uptime or future delivery.");
+
+  await sendText(env, chatId, lines.join("\n"));
 }
 
 async function handleReminderRequest(env, chatId, raw) {
@@ -977,7 +1021,7 @@ async function processOutreachScheduled(env, scheduledTime) {
 
 function isCloudCommand(message) {
   const text = (message.text || "").trim().toLowerCase();
-  return isReminderRequest(text) || text === "/start" || text === "/help" || text === "help" ||
+  return isReminderRequest(text) || text === "/status" || text === "/start" || text === "/help" || text === "help" ||
     text === "/schedule" || text === "/reminders" ||
     text === "/remind" || text.startsWith("/remind ") || text === "/cancel" || text.startsWith("/cancel ") ||
     text === "/remindcall" || text.startsWith("/remindcall ") ||
@@ -1013,6 +1057,10 @@ async function handleMessage(env, message) {
 
   if (text === "/start" || text === "/help" || text === "help") {
     await sendText(env, chatId, HELP);
+    return;
+  }
+  if (text === "/status") {
+    await handleSystemStatus(env, chatId);
     return;
   }
   if (isReminderRequest(raw)) {
