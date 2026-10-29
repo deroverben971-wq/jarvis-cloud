@@ -4,6 +4,8 @@ JARVIS receives Telegram messages through a Cloudflare Worker and uses Workers A
 
 ## Commands
 
+Reminder requests are parsed before normal AI chat so a scheduling request cannot be answered as though JARVIS has no reminder tool. The free Telegram reminder is distinct from a native Android Clock alarm; delivery depends on the production Worker Cron Trigger and Telegram being configured.
+
 - /help — show commands.
 - /calendar — list events for the next 7 days from your Google Calendar default calendar.
 - /event YYYY-MM-DD HH:MM duration title — create a Google Calendar event; duration 15–480 minutes. All times are Asia/Manila.
@@ -14,7 +16,8 @@ JARVIS receives Telegram messages through a Cloudflare Worker and uses Workers A
 - Food-ordering commands are intentionally disabled in this deployment. `/food` returns a disabled notice and does not create or place an order.
 - /schedule — reminders due today.
 - /reminders — list upcoming JARVIS reminders.
-- /remind YYYY-MM-DD HH:MM task — free Telegram reminder.
+- /remind YYYY-MM-DD HH:MM task — free Telegram reminder (Manila time).
+- /reminder tomorrow 8:00 am task — natural-language reminder alias; also supports “remind me tomorrow at 8 AM to ...” and “remind me in 15 minutes to ...”. JARVIS confirms only after the D1 insert succeeds.
 - /remindcall YYYY-MM-DD HH:MM task — create a JARVIS reminder that also requests a phone call when due. Requires optional voice-provider configuration; disabled unless fully configured.
 - /callme message — explicitly request an immediate spoken phone call. Disabled unless all optional voice settings are configured.
 - /cancel ID — cancel an active JARVIS reminder.

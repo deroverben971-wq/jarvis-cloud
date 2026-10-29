@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "cloud-phase2/src/index.js"
+      - "cloud-phase2/src/reminder-parser.mjs"
+      - "cloud-phase2/tests/reminder-parser.test.mjs"
       - "cloud-phase2/wrangler.jsonc"
       - "cloud-phase2/google-calendar-apps-script.js"
       - "cloud-phase2/gmail-outreach-apps-script.js"
@@ -41,7 +43,11 @@ jobs:
       - name: Validate Wrangler JSON configuration
         run: python -m json.tool cloud-phase2/wrangler.jsonc > /dev/null
       - name: Check Worker JavaScript syntax
-        run: node --check cloud-phase2/src/index.js
+        run: |
+          node --check cloud-phase2/src/index.js
+          node --check cloud-phase2/src/reminder-parser.mjs
+      - name: Test reminder parsing and Manila time handling
+        run: node --test cloud-phase2/tests/reminder-parser.test.mjs
       - name: Check Google Apps Script JavaScript syntax
         run: |
           cp cloud-phase2/google-calendar-apps-script.js /tmp/google-calendar-apps-script.js

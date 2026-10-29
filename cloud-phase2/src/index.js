@@ -1,3 +1,5 @@
+import { isReminderRequest, manilaInputToUtc, parseReminderRequest } from "./reminder-parser.mjs";
+
 const HELP = [
   "🤖 JARVIS CLOUD — PHASE 2",
   "",
@@ -7,6 +9,8 @@ const HELP = [
   "/schedule — reminders due today",
   "/reminders — list upcoming reminders",
   "/remind YYYY-MM-DD HH:MM task — add a reminder (Manila time)",
+  "/reminder tomorrow 8:00 am task — natural-language reminder (Manila time)",
+  "You can also say: remind me tomorrow at 8 AM to do something.",
   "/cancel ID — cancel a reminder",
   "/remindcall YYYY-MM-DD HH:MM task — reminder plus a phone call (optional paid provider)",
   "",
@@ -94,23 +98,35 @@ function localDateParts(date = new Date()) {
   return { year: Number(out.year), month: Number(out.month), day: Number(out.day) };
 }
 
-function manilaInputToUtc(dateText, timeText) {
-  const d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText);
-  const t = /^(\d{2}):(\d{2})$/.exec(timeText);
-  if (!d || !t) return null;
-  const year = Number(d[1]), month = Number(d[2]), day = Number(d[3]);
-  const hour = Number(t[1]), minute = Number(t[2]);
-  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) return null;
-  const utc = new Date(Date.UTC(year, month - 1, day, hour - 8, minute));
-  if (utc.getUTCFullYear() !== year || utc.getUTCMonth() !== month - 1 || utc.getUTCDate() !== day) return null;
-  return utc;
-}
-
 function formatManila(iso) {
   return new Intl.DateTimeFormat("en-PH", {
     timeZone: "Asia/Manila", weekday: "short", month: "short", day: "numeric",
     hour: "numeric", minute: "2-digit", hour12: true
   }).format(new Date(iso));
+}
+
+async function handleReminderRequest(env, chatId, raw) {
+  const parsed = parseReminderRequest(raw);
+  if (!parsed.ok) {
+    await sendText(env, chatId,
+      "⏰ I couldn't save that reminder, so nothing has been scheduled. " + parsed.error +
+      "\n\nExamples:\n/reminder tomorrow 8:00 am Continue building JARVIS\n/remind 2026-10-30 08:00 Continue building JARVIS\n\nTimes use Asia/Manila (Philippines time).");
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const result = await env.DB.prepare(
+    "INSERT INTO reminders (chat_id, task, due_at, created_at) VALUES (?, ?, ?, ?)"
+  ).bind(String(chatId), parsed.task, parsed.dueAt, now).run();
+  const id = result.meta?.last_row_id;
+  if (!id) {
+    throw new Error("Reminder insert did not return an ID");
+  }
+  await sendText(env, chatId,
+    "✅ Reminder saved in JARVIS.\nID: #" + id +
+    "\nTask: " + parsed.task +
+    "\nWhen: " + formatManila(parsed.dueAt) +
+    "\n\nI’ll send you a Telegram reminder at that time. This is not a native Android Clock alarm.");
 }
 
 async function showReminders(env, chatId, todayOnly = false) {
@@ -961,7 +977,7 @@ async function processOutreachScheduled(env, scheduledTime) {
 
 function isCloudCommand(message) {
   const text = (message.text || "").trim().toLowerCase();
-  return text === "/start" || text === "/help" || text === "help" ||
+  return isReminderRequest(text) || text === "/start" || text === "/help" || text === "help" ||
     text === "/schedule" || text === "/reminders" ||
     text === "/remind" || text.startsWith("/remind ") || text === "/cancel" || text.startsWith("/cancel ") ||
     text === "/remindcall" || text.startsWith("/remindcall ") ||
@@ -999,6 +1015,11 @@ async function handleMessage(env, message) {
     await sendText(env, chatId, HELP);
     return;
   }
+  if (isReminderRequest(raw)) {
+    await handleReminderRequest(env, chatId, raw);
+    return;
+  }
+
   if (text === "/food" || text.startsWith("/food ")) {
     await sendText(env, chatId, "🍽️ The food-order feature is intentionally disabled in this JARVIS deployment. No order was placed.");
     return;
@@ -1219,24 +1240,6 @@ async function handleMessage(env, message) {
     return;
   }
 
-  if (text.startsWith("/remind ")) {
-    const match = /^\/remind\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})\s+([\s\S]{1,300})$/i.exec(raw);
-    if (!match) {
-      await sendText(env, chatId, "Use this format (Manila time):\n/remind YYYY-MM-DD HH:MM task\n\nExample:\n/remind 2026-10-25 18:00 Study for science");
-      return;
-    }
-    const due = manilaInputToUtc(match[1], match[2]);
-    if (!due || due.getTime() <= Date.now()) {
-      await sendText(env, chatId, "That date/time is invalid or already passed. Use a future date and 24-hour time in Manila time.");
-      return;
-    }
-    const result = await env.DB.prepare(
-      "INSERT INTO reminders (chat_id, task, due_at, created_at) VALUES (?, ?, ?, ?)"
-    ).bind(chatId, match[3].trim(), due.toISOString(), new Date().toISOString()).run();
-    const id = result.meta?.last_row_id;
-    await sendText(env, chatId, "✅ Reminder saved!\nID: #" + id + "\nTask: " + match[3].trim() + "\nWhen: " + formatManila(due.toISOString()));
-    return;
-  }
   if (text.startsWith("/cancel")) {
     const id = Number(raw.split(/\s+/)[1]);
     if (!Number.isSafeInteger(id) || id < 1) {

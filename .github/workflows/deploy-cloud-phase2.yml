@@ -54,6 +54,8 @@ jobs:
           print("Wrangler configuration checks passed.")
           PY
           node --check cloud-phase2/src/index.js
+          node --check cloud-phase2/src/reminder-parser.mjs
+          node --test cloud-phase2/tests/reminder-parser.test.mjs
           node --check cloud-phase2/gmail-outreach-apps-script.js
           python -m json.tool cloud-phase2/appsscript.json > /dev/null
           python -m json.tool cloud-phase2/gmail-outreach-appsscript.json > /dev/null
