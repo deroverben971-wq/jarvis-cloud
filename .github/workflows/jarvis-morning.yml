@@ -95,7 +95,7 @@ jobs:
               "• Pick one important task to finish today.",
               "• Check your plans and reminders before starting.",
               "",
-              "ℹ️ Weather and headlines are fetched live when available. This version does not yet read your calendar or personal reminders."
+              "ℹ️ This weather/news briefing is separate from your JARVIS daily schedule message. Use /schedule and /calendar in Telegram to refresh them on demand."
           ]
           text = "\n".join(sections)
           url = "https://api.telegram.org/bot" + token + "/sendMessage"

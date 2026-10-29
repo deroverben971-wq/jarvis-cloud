@@ -64,7 +64,8 @@ jobs:
           from pathlib import Path
           conn = sqlite3.connect(":memory:")
           conn.executescript(Path("cloud-phase2/schema.sql").read_text(encoding="utf-8"))
-          print("D1 schema validation passed.")
+          conn.executescript(Path("cloud-phase2/migrations/20261029_daily_schedule_briefings.sql").read_text(encoding="utf-8"))
+          print("D1 schema and daily schedule migration validation passed.")
           PY
 
       - name: Validate Wrangler bundle without deploying

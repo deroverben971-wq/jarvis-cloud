@@ -4,7 +4,7 @@ JARVIS receives Telegram messages through a Cloudflare Worker and uses Workers A
 
 ## Commands
 
-Reminder requests are parsed before normal AI chat so a scheduling request cannot be answered as though JARVIS has no reminder tool. The free Telegram reminder is distinct from a native Android Clock alarm; delivery depends on the production Worker Cron Trigger and Telegram being configured.
+Reminder requests are parsed before normal AI chat so a scheduling request cannot be answered as though JARVIS has no reminder tool. The free Telegram reminder is distinct from a native Android Clock alarm; delivery depends on the production Worker Cron Trigger and Telegram being configured. `/status` runs read-only checks for D1, Calendar, Gmail profile, and configuration flags without sending email or changing events.
 
 - /help — show commands.
 - /calendar — list events for the next 7 days from your Google Calendar default calendar.
@@ -18,12 +18,16 @@ Reminder requests are parsed before normal AI chat so a scheduling request canno
 - /reminders — list upcoming JARVIS reminders.
 - /remind YYYY-MM-DD HH:MM task — free Telegram reminder (Manila time).
 - /reminder tomorrow 8:00 am task — natural-language reminder alias; also supports “remind me tomorrow at 8 AM to ...” and “remind me in 15 minutes to ...”. JARVIS confirms only after the D1 insert succeeds.
+- A daily schedule summary is sent around 7:00 AM Manila time by the Cloudflare Worker when its Cron Trigger is active; it includes outstanding reminders scheduled for that day and Calendar events for today if the Calendar bridge is connected. Delivery state is tracked once per chat/date in D1.
+- `/status` — check the live Worker, D1 reminders query, Calendar read access, Gmail sender identity, and local-bridge secret configuration. It cannot prove the PC is online or inspect whether a production Cron Trigger is enabled.
 - /remindcall YYYY-MM-DD HH:MM task — create a JARVIS reminder that also requests a phone call when due. Requires optional voice-provider configuration; disabled unless fully configured.
 - /callme message — explicitly request an immediate spoken phone call. Disabled unless all optional voice settings are configured.
 - /cancel ID — cancel an active JARVIS reminder.
 - /remember fact, /memories, /forget ID, /history, /forgetme — manage cloud facts and chat history.
 
 ## Before deploying this integration update
+
+Before deploying the daily schedule-summary change, run the SQL from `cloud-phase2/migrations/20261029_daily_schedule_briefings.sql` once in Cloudflare D1 Console against the existing `jarvis-reminders` database. The migration creates one idempotency/status table only; it does not delete or alter reminder rows. Do not deploy this code until the migration succeeds.
 
 The calendar-delete feature adds only the `pending_calendar_deletions` D1 table and its index. After merging, run the new `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` statements at the bottom of `cloud-phase2/schema.sql` in Cloudflare D1 Console before deploying the Worker source. This preserves all existing reminders, chat history, facts, and bridge data. Keep the existing Telegram webhook and all current secret values.
 

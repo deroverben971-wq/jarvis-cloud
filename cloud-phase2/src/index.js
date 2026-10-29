@@ -953,6 +953,100 @@ async function handleOutreachCommand(env, chatId, raw) {
   await sendText(env, chatId, outreachHelp(campaign));
 }
 
+async function maybeSendDailySchedule(env, scheduledTime) {
+  const current = new Date(Number(scheduledTime || Date.now()));
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+  }).formatToParts(current);
+  const local = {};
+  for (const part of parts) if (part.type !== "literal") local[part.type] = part.value;
+  const hour = Number(local.hour), minute = Number(local.minute);
+  // Permit a short catch-up window in case a scheduled invocation is delayed.
+  if (hour !== 7 || minute > 10) return;
+
+  const localDate = String(local.year) + "-" + String(local.month) + "-" + String(local.day);
+  const nowIso = current.toISOString();
+  const staleSendingBefore = new Date(current.getTime() - 5 * 60 * 1000).toISOString();
+  const existing = await env.DB.prepare(
+    "SELECT status, attempted_at FROM daily_schedule_briefings WHERE chat_id = ? AND local_date = ?"
+  ).bind(String(env.TELEGRAM_CHAT_ID), localDate).first();
+
+  if (existing?.status === "sent") return;
+  if (existing?.status === "sending" && String(existing.attempted_at) >= staleSendingBefore) return;
+
+  if (existing) {
+    const claimed = await env.DB.prepare(
+      "UPDATE daily_schedule_briefings SET status='sending', attempted_at=?, last_error=NULL WHERE chat_id=? AND local_date=? AND status != 'sent' AND (status='failed' OR (status='sending' AND attempted_at < ?))"
+    ).bind(nowIso, String(env.TELEGRAM_CHAT_ID), localDate, staleSendingBefore).run();
+    if (!claimed.meta?.changes) return;
+  } else {
+    const claimed = await env.DB.prepare(
+      "INSERT OR IGNORE INTO daily_schedule_briefings (chat_id, local_date, status, attempted_at) VALUES (?, ?, 'sending', ?)"
+    ).bind(String(env.TELEGRAM_CHAT_ID), localDate, nowIso).run();
+    if (!claimed.meta?.changes) return;
+  }
+
+  try {
+    const todayStart = new Date(Date.UTC(Number(local.year), Number(local.month) - 1, Number(local.day), -8, 0)).toISOString();
+    const tomorrowStart = new Date(Date.UTC(Number(local.year), Number(local.month) - 1, Number(local.day) + 1, -8, 0)).toISOString();
+    const reminderRows = await env.DB.prepare(
+      "SELECT id, task, due_at FROM reminders WHERE chat_id=? AND sent_at IS NULL AND cancelled_at IS NULL AND due_at>=? AND due_at<? ORDER BY due_at LIMIT 12"
+    ).bind(String(env.TELEGRAM_CHAT_ID), todayStart, tomorrowStart).all();
+
+    const lines = [
+      "🌅 JARVIS — YOUR DAILY SCHEDULE",
+      "📅 " + localDate + " · 7:00 AM PHT",
+      "",
+      "⏰ REMINDERS"
+    ];
+    const reminders = reminderRows.results || [];
+    if (reminders.length) {
+      lines.push(...reminders.map(r => "• " + formatManila(r.due_at) + " — " + String(r.task).slice(0, 220)));
+    } else {
+      lines.push("No upcoming JARVIS reminders scheduled for today.");
+    }
+
+    const calendar = await callGoogleCalendar(env, { action: "list_events", days: 1 });
+    lines.push("", "📆 GOOGLE CALENDAR");
+    if (!calendar.ok) {
+      lines.push(calendar.setupMissing
+        ? "Calendar is not connected. Use /status to check setup."
+        : "Calendar could not be checked. Use /status for diagnostics.");
+    } else {
+      const events = (calendar.events || []).filter(event => {
+        const start = String(event.start || "");
+        if (!start) return false;
+        if (event.allDay || /^\d{4}-\d{2}-\d{2}$/.test(start)) return start.slice(0, 10) === localDate;
+        const eventDate = new Intl.DateTimeFormat("en-CA", {
+          timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit"
+        }).format(new Date(start));
+        return eventDate === localDate;
+      }).slice(0, 10);
+      if (events.length) {
+        lines.push(...events.map(event => {
+          const start = String(event.start || "");
+          const when = event.allDay || /^\d{4}-\d{2}-\d{2}$/.test(start)
+            ? "All day" : formatManila(start);
+          return "• " + when + " — " + String(event.title || "(Untitled event)").slice(0, 180);
+        }));
+      } else {
+        lines.push("No more Calendar events found for today.");
+      }
+    }
+    lines.push("", "Use /schedule for reminders or /calendar to refresh your events.");
+    await sendText(env, env.TELEGRAM_CHAT_ID, lines.join("\n"));
+    await env.DB.prepare(
+      "UPDATE daily_schedule_briefings SET status='sent', sent_at=?, last_error=NULL WHERE chat_id=? AND local_date=? AND status='sending'"
+    ).bind(new Date().toISOString(), String(env.TELEGRAM_CHAT_ID), localDate).run();
+  } catch (error) {
+    console.error("Daily schedule briefing failed:", error?.message || "unknown error");
+    await env.DB.prepare(
+      "UPDATE daily_schedule_briefings SET status='failed', last_error=?, attempted_at=? WHERE chat_id=? AND local_date=? AND status='sending'"
+    ).bind(String(error?.message || "unknown error").slice(0, 180), new Date().toISOString(), String(env.TELEGRAM_CHAT_ID), localDate).run();
+  }
+}
+
 async function processOutreachScheduled(env, scheduledTime) {
   if (!env.GMAIL_WEBAPP_URL || !env.GMAIL_SHARED_SECRET || !env.DB || !env.TELEGRAM_BOT_TOKEN) return;
   const current = new Date(scheduledTime || Date.now());
@@ -1532,6 +1626,12 @@ export default {
       } catch (error) {
         console.error("Could not deliver reminder", reminder.id, error?.message || "unknown error");
       }
+    }
+
+    try {
+      await maybeSendDailySchedule(env, controller.scheduledTime);
+    } catch (error) {
+      console.error("Daily schedule processing failed:", error?.message || "unknown error");
     }
 
     const minute = Math.floor(Number(controller.scheduledTime || Date.now()) / 60000);
