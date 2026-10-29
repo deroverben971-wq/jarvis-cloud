@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "cloud-phase2/src/index.js"
+      - "cloud-phase2/wrangler.jsonc"
       - "cloud-phase2/google-calendar-apps-script.js"
       - "cloud-phase2/gmail-outreach-apps-script.js"
       - "cloud-phase2/gmail-outreach-appsscript.json"
@@ -15,6 +16,7 @@ on:
       - main
     paths:
       - "cloud-phase2/src/index.js"
+      - "cloud-phase2/wrangler.jsonc"
       - "cloud-phase2/google-calendar-apps-script.js"
       - "cloud-phase2/gmail-outreach-apps-script.js"
       - "cloud-phase2/gmail-outreach-appsscript.json"
@@ -34,6 +36,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Validate Wrangler JSON configuration
+        run: python -m json.tool cloud-phase2/wrangler.jsonc > /dev/null
       - name: Check Worker JavaScript syntax
         run: node --check cloud-phase2/src/index.js
       - name: Check Google Apps Script JavaScript syntax
