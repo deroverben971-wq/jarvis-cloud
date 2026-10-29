@@ -11,8 +11,7 @@ JARVIS receives Telegram messages through a Cloudflare Worker and uses Workers A
 - /deleteevent title — search matching calendar events from the past year through the next year; JARVIS displays each match and a short-lived confirmation code. No event is deleted by this command alone.
 - /confirmdelete CODE — delete only the exact event saved for that code after checking the title and start time again. Codes expire after 10 minutes.
 - /canceldelete CODE — cancel a pending confirmation without deleting the event.
-- /food — help with a food-order draft, official GrabFood/foodpanda links, and a manual quote comparison.
-- /food start request, /food area area, /food budget amount, /food add item, /food quote, /food compare, /food show, /food clear — organize an order draft and compare estimates copied from both apps.
+- Food-ordering commands are intentionally disabled in this deployment. `/food` returns a disabled notice and does not create or place an order.
 - /schedule — reminders due today.
 - /reminders — list upcoming JARVIS reminders.
 - /remind YYYY-MM-DD HH:MM task — free Telegram reminder.
@@ -66,9 +65,9 @@ Campaign setup is conversational: JARVIS asks what product/service is offered, w
 
 Only contact appropriate business prospects you have a legitimate reason to contact. Do not scrape or bulk-import addresses. The email asks recipients to reply "No thanks" if they don't want further follow-up, and any detected reply stops follow-ups. Review applicable privacy/marketing requirements and have a parent/guardian review the campaign and connected email account before sending. Google Apps Script quotas vary and can change; this internal cap is intentionally much lower than published quotas: https://developers.google.com/apps-script/guides/services/quotas
 
-## Food-order preparation (no direct checkout)
+## Food-order preparation (disabled in current deployment)
 
-The `/food` commands keep a single draft in D1, including a general city/neighborhood, a PHP budget, requested items, and manually copied checkout estimates. `/food compare` compares the totals entered for GrabFood and foodpanda. The Worker does not connect to customer accounts, read live account-specific menus, put items in cart, or place an order. Users must finish address entry, verify item availability, recheck the total, and submit payment themselves in the official apps. Never store passwords, OTPs, payment information, or full delivery addresses in the draft. Official ordering links are `https://food.grab.com/ph/en/` and `https://www.foodpanda.ph/`. The platforms' publicly documented integrations are partner/merchant APIs rather than general consumer checkout APIs.
+Food-ordering code is retained in the repository for possible future review, but the active Worker command route is intentionally disabled. In this deployment, `/food` returns a disabled notice and does not access or change food drafts, connect to ordering accounts, or place an order. Do not re-enable it as part of Gmail outreach deployment without a separate explicit review.
 
 ## Actual phone calls (optional; not free to run reliably)
 

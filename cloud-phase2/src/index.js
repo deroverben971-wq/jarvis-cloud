@@ -28,16 +28,6 @@ const HELP = [
   "/outreach pause or /outreach resume — control follow-ups",
   "/outreach optout EMAIL — suppress an address from future outreach",
   "",
-  "FOOD ORDER PREPARATION",
-  "/food — show food-order commands and official ordering links",
-  "/food start what you want — start an order draft",
-  "/food area city or neighborhood — set general delivery area (not your street address)",
-  "/food budget amount — set budget in PHP",
-  "/food add item — add an item to your draft",
-  "/food quote | platform | restaurant | subtotal | delivery fee | other fees | discount | ETA — save checkout estimate",
-  "/food compare — compare saved GrabFood and foodpanda estimates",
-  "/food show — review the draft and official app links",
-  "/food clear — delete this draft only (no order is placed)",
   "",
   "PHONE CALLS (optional; disabled by default and may cost money)",
   "/callme message — request an immediate phone call",
@@ -1010,7 +1000,7 @@ async function handleMessage(env, message) {
     return;
   }
   if (text === "/food" || text.startsWith("/food ")) {
-    await handleFoodCommand(env, chatId, raw);
+    await sendText(env, chatId, "🍽️ The food-order feature is intentionally disabled in this JARVIS deployment. No order was placed.");
     return;
   }
   if (text === "/outreach" || text.startsWith("/outreach ")) {
