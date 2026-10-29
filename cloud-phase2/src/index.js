@@ -1422,6 +1422,9 @@ export default {
       return json({ ok: false, error: "Invalid JSON" }, 400);
     }
     try {
+      // Check deduplication first, but record completion only after processing succeeds.
+      // Recording before processing can permanently lose a Telegram update if D1 or Telegram
+      // fails transiently: Telegram retries the webhook, then the retry looks like a duplicate.
       if (update.update_id !== undefined) {
         const seen = await env.DB.prepare("SELECT update_id FROM processed_updates WHERE update_id = ?")
           .bind(update.update_id).first();
@@ -1444,6 +1447,10 @@ export default {
             await enqueueForLocalJarvis(env, message, update.update_id);
           }
         }
+      }
+      if (update.update_id !== undefined) {
+        await env.DB.prepare("INSERT OR IGNORE INTO processed_updates (update_id, processed_at) VALUES (?, ?)")
+          .bind(update.update_id, new Date().toISOString()).run();
       }
       if (update.update_id !== undefined) {
         await env.DB.prepare("INSERT OR IGNORE INTO processed_updates (update_id, processed_at) VALUES (?, ?)")
