@@ -12,6 +12,7 @@ on:
       - "cloud-phase2/gmail-outreach-appsscript.json"
       - "cloud-phase2/appsscript.json"
       - "cloud-phase2/schema.sql"
+      - "cloud-phase2/migrations/20261029_daily_schedule_briefings.sql"
       - ".github/workflows/validate-cloud-phase2.yml"
       - ".github/workflows/deploy-cloud-phase2.yml"
   push:
@@ -69,6 +70,8 @@ jobs:
           sql = Path("cloud-phase2/schema.sql").read_text(encoding="utf-8")
           connection = sqlite3.connect(":memory:")
           connection.executescript(sql)
+          migration = Path("cloud-phase2/migrations/20261029_daily_schedule_briefings.sql").read_text(encoding="utf-8")
+          connection.executescript(migration)
           connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
           print("D1 schema syntax passed.")
           PY
