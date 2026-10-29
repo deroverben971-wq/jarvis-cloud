@@ -7,7 +7,9 @@
     "enabled": true
   },
   "triggers": {
-    "crons": ["* * * * *"]
+    "crons": [
+      "* * * * *"
+    ]
   },
   "d1_databases": [
     {
@@ -15,5 +17,9 @@
       "database_name": "jarvis-reminders",
       "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
     }
-  ]
+  ],
+  "keep_vars": true,
+  "ai": {
+    "binding": "AI"
+  }
 }
