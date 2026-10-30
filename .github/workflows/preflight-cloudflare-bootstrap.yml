@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - 'cloud-phase2/bootstrap-api-deploy.mjs'
+      - 'cloud-phase2/src/index.js'
       - 'cloud-phase2/wrangler.jsonc'
       - '.github/workflows/preflight-cloudflare-bootstrap.yml'
 
@@ -28,8 +29,10 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Check bootstrap script syntax
-        run: node --check cloud-phase2/bootstrap-api-deploy.mjs
+      - name: Check Worker and bootstrap script syntax
+        run: |
+          node --check cloud-phase2/src/index.js
+          node --check cloud-phase2/bootstrap-api-deploy.mjs
 
       - name: Build the Worker bundle without deploying
         run: |
