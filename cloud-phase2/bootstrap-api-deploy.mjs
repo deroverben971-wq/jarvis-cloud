@@ -169,8 +169,13 @@ if (liveScript.limits) metadata.limits = liveScript.limits;
 if (liveScript.cache_options) metadata.cache_options = liveScript.cache_options;
 if (liveScript.placement_mode) metadata.placement = { mode: liveScript.placement_mode };
 
+if (checkOnly) {
+  console.log("READ-ONLY PREFLIGHT PASSED. No Worker upload or production change was made.");
+  process.exit(0);
+}
+
 const form = new FormData();
-form.set("metadata", JSON.stringify(metadata));
+form.set("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }), "metadata.json");
 form.set(
   mainModule,
   new Blob([bundle], { type: "application/javascript+module" }),
