@@ -136,6 +136,12 @@ if (
 }
 
 const activeVersionId = activeVersions[0].version_id;
+console.log("Current active deployment ID: " + (activeDeployment.id || "not reported") + ".");
+console.log("Current active production version: " + activeVersionId + " (100%).");
+console.log(
+  "Latest uploaded version: " + latestUploadedVersion.id +
+  (Number.isInteger(latestUploadedVersion.number) ? " (version " + latestUploadedVersion.number + ")" : "") + "."
+);
 let pendingVersionId = null;
 
 if (latestUploadedVersion.id === activeVersionId) {
@@ -285,25 +291,52 @@ const deployment = await api("/workers/scripts/" + workerName + "/deployments", 
   })
 });
 
-const deployedVersion = (deployment?.versions || []).find((item) => item.version_id === versionId);
-if (!deployedVersion || deployedVersion.percentage !== 100) {
-  throw new Error("Cloudflare accepted the deployment request but did not confirm 100% traffic on the uploaded version. Inspect Deployments before retrying.");
+console.log("Cloudflare accepted the deployment request" + (deployment?.id ? " (deployment " + deployment.id + ")" : "") + ".");
+console.log("Verifying the result through the GET Deployments endpoint.");
+
+let deploymentsAfter = null;
+let activeDeploymentAfter = null;
+let activeVersionAfter = null;
+for (let attempt = 1; attempt <= 10; attempt++) {
+  deploymentsAfter = await api("/workers/scripts/" + workerName + "/deployments");
+  activeDeploymentAfter = deploymentsAfter?.deployments?.[0] || null;
+  activeVersionAfter = (activeDeploymentAfter?.versions || []).find(
+    (item) => item.version_id === versionId && item.percentage === 100
+  ) || null;
+
+  if (activeVersionAfter) {
+    console.log("GET Deployments confirms the uploaded version is receiving 100% of traffic.");
+    break;
+  }
+
+  const observed = (activeDeploymentAfter?.versions || [])
+    .map((item) => String(item.version_id) + "=" + String(item.percentage) + "%")
+    .join(", ") || "no version allocation returned";
+  console.log("Deployment is not yet confirmed (check " + attempt + "/10). Latest deployment: " + observed + ".");
+  if (attempt < 10) await new Promise((resolve) => setTimeout(resolve, 1000));
 }
 
-const [serviceAfter, schedulesAfter, subdomainAfter, bindingsAfter, deploymentsAfter] = await Promise.all([
+if (!activeVersionAfter) {
+  const latestSummary = activeDeploymentAfter
+    ? "Latest deployment ID: " + (activeDeploymentAfter.id || "not reported") +
+      "; versions: " + ((activeDeploymentAfter.versions || [])
+        .map((item) => String(item.version_id) + "=" + String(item.percentage) + "%")
+        .join(", ") || "none reported")
+    : "Cloudflare returned no deployment records";
+  throw new Error(
+    "Deployment request was accepted, but GET Deployments did not confirm the requested version at 100% traffic after 10 checks. " +
+    latestSummary + ". No automatic retry was attempted; inspect Cloudflare Deployments."
+  );
+}
+
+const [serviceAfter, schedulesAfter, subdomainAfter, bindingsAfter] = await Promise.all([
   api("/workers/services/" + workerName),
   api("/workers/scripts/" + workerName + "/schedules"),
   api(environmentPath + "/subdomain"),
-  api(environmentPath + "/bindings"),
-  api("/workers/scripts/" + workerName + "/deployments")
+  api(environmentPath + "/bindings")
 ]);
 
 const sourceAfter = serviceAfter?.default_environment?.script?.last_deployed_from || "unknown";
-const activeDeploymentAfter = deploymentsAfter?.deployments?.[0];
-const activeVersionAfter = (activeDeploymentAfter?.versions || []).find((item) => item.version_id === versionId);
-if (!activeVersionAfter || activeVersionAfter.percentage !== 100) {
-  throw new Error("The newest active deployment does not show the uploaded version at 100% traffic. Stop and inspect Deployments.");
-}
 if (JSON.stringify(cronList(schedulesAfter)) !== JSON.stringify(currentCrons)) {
   throw new Error("The upload succeeded, but Cron schedules changed unexpectedly. Stop and inspect the schedule settings before another deployment.");
 }
