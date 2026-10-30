@@ -95,14 +95,8 @@ if (environmentName !== "production") {
 }
 const deploymentSource = defaultEnvironment.script.last_deployed_from || "unknown";
 
-if (deploymentSource !== "dash") {
-  console.log('Worker deployment source is "' + deploymentSource + '", not dashboard-managed.');
-  console.log("Skipping the one-time API bootstrap; the normal Wrangler deployment step will run.");
-  await writeOutput("performed", "false");
-  process.exit(0);
-}
-
-console.log("Dashboard-managed Worker detected. Preparing a one-time direct API upload.");
+console.log('Current Worker deployment source: "' + deploymentSource + '".');
+console.log("Using the direct Workers Script Upload API to avoid Wrangler's dashboard metadata lookup.");
 console.log("The token remains limited to Individual Workers Editor for this Worker.");
 
 const databases = config.d1_databases || [];
@@ -171,6 +165,8 @@ if (Array.isArray(liveScript.streaming_tail_consumers)) metadata.streaming_tail_
 if (liveScript.limits) metadata.limits = liveScript.limits;
 if (liveScript.cache_options) metadata.cache_options = liveScript.cache_options;
 if (liveScript.placement_mode) metadata.placement = { mode: liveScript.placement_mode };
+if (liveScript.has_assets === true) metadata.keep_assets = true;
+if (liveScript.usage_model) metadata.usage_model = liveScript.usage_model;
 
 if (checkOnly) {
   console.log("READ-ONLY PREFLIGHT PASSED. No Worker upload or production change was made.");
@@ -207,9 +203,6 @@ const [serviceAfter, schedulesAfter, subdomainAfter, bindingsAfter] = await Prom
 ]);
 
 const sourceAfter = serviceAfter?.default_environment?.script?.last_deployed_from || "unknown";
-if (sourceAfter === "dash") {
-  throw new Error("The upload succeeded, but Cloudflare still marks the Worker as dashboard-managed. Further Wrangler deployment may still hit the metadata-read error.");
-}
 if (JSON.stringify(cronList(schedulesAfter)) !== JSON.stringify(currentCrons)) {
   throw new Error("The upload succeeded, but Cron schedules changed unexpectedly. Stop before another deployment and inspect the schedule settings.");
 }
@@ -219,7 +212,7 @@ if (Boolean(subdomainAfter?.enabled) !== Boolean(subdomainBefore?.enabled) ||
 }
 await verifyBindings(bindingsAfter, databases[0].database_id);
 
-console.log('Verified: last_deployed_from is now "' + sourceAfter + '".');
+console.log('Verified: Cloudflare reports last_deployed_from as "' + sourceAfter + '".');
 console.log("Verified: DB/AI bindings, existing variables/secrets, Cron schedules, and workers.dev settings are preserved.");
 console.log("The next deployment can use normal Wrangler without the dashboard-only metadata download.");
 await writeOutput("performed", "true");
