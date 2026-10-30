@@ -2,6 +2,13 @@ name: Preflight JARVIS Cloud Bootstrap
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cloud-phase2/bootstrap-api-deploy.mjs'
+      - 'cloud-phase2/wrangler.jsonc'
+      - '.github/workflows/preflight-cloudflare-bootstrap.yml'
 
 permissions:
   contents: read
