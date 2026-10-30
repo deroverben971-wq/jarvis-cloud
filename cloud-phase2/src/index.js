@@ -852,19 +852,67 @@ async function handleOutreachCommand(env, chatId, raw) {
     ].join("\n");
     let subject = "", body = "";
     try {
-      const text = extractAIText(await env.AI.run(CLOUD_AI_MODEL, {
+      const rawResult = await env.AI.run(CLOUD_AI_MODEL, {
         messages: [
-          { role: "system", content: "Write truthful business correspondence. Output valid JSON only." },
+          {
+            role: "system",
+            content: 'Write truthful, concise business correspondence. Return exactly one JSON object with two string properties: "subject" and "body". Do not use Markdown fences or add commentary.'
+          },
           { role: "user", content: prompt }
         ],
-        max_tokens: 450, temperature: 0.25
-      }));
-      const open = text.indexOf("{"), close = text.lastIndexOf("}");
-      if (open < 0 || close <= open) throw new Error("No JSON");
-      const parsed = JSON.parse(text.slice(open, close + 1));
-      subject = String(parsed.subject || "").trim();
-      body = String(parsed.body || "").trim();
-      if (!subject || !body || subject.length > 200 || body.length > 5000 || /[\r\n]/.test(subject)) throw new Error("Invalid draft");
+        max_tokens: 600, temperature: 0.1
+      });
+      const aiText = extractAIText(rawResult);
+      if (!aiText) throw new Error("AI returned an empty response");
+
+      // Accept plain JSON, fenced JSON, or JSON surrounded by commentary.
+      const candidates = [aiText.trim()];
+      const unfenced = aiText.trim()
+        .replace(/^\x60{3}(?:json)?\s*/i, "")
+        .replace(/\s*\x60{3}$/, "")
+        .trim();
+      if (unfenced !== candidates[0]) candidates.push(unfenced);
+
+      let parsed = null;
+      for (const candidate of candidates) {
+        try {
+          const value = JSON.parse(candidate);
+          if (value && typeof value === "object" && !Array.isArray(value)) {
+            parsed = value;
+            break;
+          }
+        } catch (_) {
+          // Try extracting a complete JSON object from surrounding text.
+        }
+        const firstBrace = candidate.indexOf("{");
+        if (firstBrace < 0) continue;
+        let depth = 0, inString = false, escaped = false;
+        for (let i = firstBrace; i < candidate.length; i++) {
+          const ch = candidate[i];
+          if (inString) {
+            if (escaped) escaped = false;
+            else if (ch === "\\\\") escaped = true;
+            else if (ch === '"') inString = false;
+            continue;
+          }
+          if (ch === '"') inString = true;
+          else if (ch === "{") depth++;
+          else if (ch === "}" && --depth === 0) {
+            try {
+              const value = JSON.parse(candidate.slice(firstBrace, i + 1));
+              if (value && typeof value === "object" && !Array.isArray(value)) parsed = value;
+            } catch (_) {}
+            break;
+          }
+        }
+        if (parsed) break;
+      }
+      if (!parsed) throw new Error("AI response did not contain a valid JSON object");
+      subject = typeof parsed.subject === "string" ? parsed.subject.trim() : "";
+      body = typeof parsed.body === "string" ? parsed.body.trim() : "";
+      if (!subject || !body || subject.length > 200 || body.length > 5000 || /[\r\n]/.test(subject)) {
+        throw new Error("AI JSON was missing a valid subject or body");
+      }
       if (!/reply\s+['"“]?no thanks/i.test(body)) body += "\n\nIf this isn't relevant, reply 'No thanks' and I won't follow up.";
       if (!body.includes(campaign.sender_name)) body += "\n\nBest,\n" + campaign.sender_name;
     } catch (error) {
