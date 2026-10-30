@@ -4,6 +4,7 @@ import path from "node:path";
 const token = process.env.CLOUDFLARE_API_TOKEN;
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 const bundleDir = process.argv[2] || "/tmp/jarvis-cloud-dry-run";
+const checkOnly = process.argv.includes("--check-only");
 
 if (!token || !accountId) {
   throw new Error("Missing Cloudflare deployment credentials. Values were not printed.");
@@ -61,22 +62,24 @@ async function verifyBindings(rows, databaseId) {
     throw new Error("Cloudflare returned an unexpected bindings format; deployment stopped safely.");
   }
 
-  const allowedTypes = new Set([
-    "d1", "ai", "plain_text", "json", "secret_text", "secret_key"
-  ]);
+  const retainedTypes = new Set(["plain_text", "json", "secret_text", "secret_key"]);
+  const managedRows = rows.filter((item) => !retainedTypes.has(item.type));
+  const unexpected = managedRows.filter(
+    (item) => !((item.name === "DB" && item.type === "d1") || (item.name === "AI" && item.type === "ai"))
+  );
 
-  const unknown = rows.filter((item) => !allowedTypes.has(item.type));
-  if (unknown.length) {
+  if (unexpected.length || managedRows.length !== 2) {
     throw new Error(
-      "The Worker has additional binding types not represented in wrangler.jsonc (" +
-      unknown.map((b) => b.type).join(", ") + "). No deployment was made."
+      "The live Worker has resource bindings beyond the configured DB and AI bindings. No deployment was made."
     );
   }
 
-  const d1 = rows.find((item) => item.name === "DB" && item.type === "d1");
-  const ai = rows.find((item) => item.name === "AI" && item.type === "ai");
-  if (!d1 || (d1.id && d1.id !== databaseId && d1.database_id !== databaseId) || !ai) {
-    throw new Error("The live DB/AI bindings do not match the checked-in deployment configuration. No deployment was made.");
+  const d1 = managedRows.find((item) => item.name === "DB" && item.type === "d1");
+  const ai = managedRows.find((item) => item.name === "AI" && item.type === "ai");
+  const liveDatabaseId = d1?.id ?? d1?.database_id;
+
+  if (!d1 || liveDatabaseId !== databaseId || !ai) {
+    throw new Error("The live DB/AI bindings do not exactly match the checked-in deployment configuration. No deployment was made.");
   }
 }
 
