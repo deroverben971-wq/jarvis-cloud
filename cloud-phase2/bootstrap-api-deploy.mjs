@@ -47,12 +47,6 @@ async function api(pathname, options = {}) {
   return payload.result;
 }
 
-async function writeOutput(name, value) {
-  if (process.env.GITHUB_OUTPUT) {
-    await fs.appendFile(process.env.GITHUB_OUTPUT, name + "=" + value + "\n");
-  }
-}
-
 function cronList(result) {
   return (result?.schedules || []).map((item) => item.cron).sort();
 }
@@ -214,5 +208,4 @@ await verifyBindings(bindingsAfter, databases[0].database_id);
 
 console.log('Verified: Cloudflare reports last_deployed_from as "' + sourceAfter + '".');
 console.log("Verified: DB/AI bindings, existing variables/secrets, Cron schedules, and workers.dev settings are preserved.");
-console.log("The next deployment can use normal Wrangler without the dashboard-only metadata download.");
-await writeOutput("performed", "true");
+console.log("Future deployments through this GitHub workflow will keep using the direct API upload path.");
