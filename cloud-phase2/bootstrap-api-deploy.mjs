@@ -90,6 +90,9 @@ if (!defaultEnvironment?.script) {
 }
 
 const environmentName = defaultEnvironment.environment || "production";
+if (environmentName !== "production") {
+  throw new Error('Expected the production Worker environment, but Cloudflare reported "' + environmentName + '". No deployment was made.');
+}
 const deploymentSource = defaultEnvironment.script.last_deployed_from || "unknown";
 
 if (deploymentSource !== "dash") {
@@ -175,7 +178,7 @@ if (checkOnly) {
 }
 
 const form = new FormData();
-form.set("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }), "metadata.json");
+form.set("metadata", JSON.stringify(metadata));
 form.set(
   mainModule,
   new Blob([bundle], { type: "application/javascript+module" }),
