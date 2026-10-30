@@ -316,6 +316,15 @@ const retainedBindingsAfter = retainedBindingKeys(bindingsAfter);
 if (JSON.stringify(retainedBindingsAfter) !== JSON.stringify(retainedBindingsBefore)) {
   throw new Error("The Worker variable/secret binding names changed unexpectedly. Stop and inspect the Worker settings before another deployment.");
 }
+
+const healthResponse = await fetch("https://jarvis-cloud-phase2.deroverben971.workers.dev/");
+const healthText = (await healthResponse.text()).trim();
+if (healthResponse.status !== 200 || healthText !== "JARVIS Cloud Phase 2 is online.") {
+  throw new Error(
+    "Cloudflare reports the version deployed, but the public Worker health check did not return the expected HTTP 200 response. Check the live Worker before considering this complete."
+  );
+}
+console.log("Verified: live workers.dev health check returned HTTP 200 with the expected JARVIS response.");
 console.log('Verified: Cloudflare reports last_deployed_from as "' + sourceAfter + '".');
 console.log("Verified: new version is serving 100% of traffic.");
 console.log("Verified: DB/AI bindings, existing variable/secret binding names, Cron schedules, and workers.dev settings are preserved.");
