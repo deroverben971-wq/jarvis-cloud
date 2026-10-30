@@ -191,23 +191,47 @@ console.log("- Cron schedules detected: " + (currentCrons.join(", ") || "none") 
 console.log("- workers.dev enabled: " + subdomainBefore.enabled + "; preview URLs enabled: " + Boolean(subdomainBefore.previews_enabled) + ".");
 console.log("- No database migration or data operation will be performed.");
 
-const upload = await api("/workers/scripts/" + workerName, {
-  method: "PUT",
+const upload = await api("/workers/scripts/" + workerName + "/versions?bindings_inherit=strict", {
+  method: "POST",
   body: form
 });
 
-console.log("Cloudflare accepted the Worker upload. Startup time: " + (upload?.startup_time_ms ?? "not reported") + " ms.");
+const versionId = upload?.id;
+if (typeof versionId !== "string" || !/^[0-9a-f-]{36}$/i.test(versionId)) {
+  throw new Error("Cloudflare did not return a valid uploaded version ID. No production deployment was attempted.");
+}
+console.log("Cloudflare accepted a new, not-yet-deployed Worker version. Startup time: " + (upload?.startup_time_ms ?? "not reported") + " ms.");
+console.log("Existing variable and secret bindings were requested to be retained from the previous upload.");
 
-const [serviceAfter, schedulesAfter, subdomainAfter, bindingsAfter] = await Promise.all([
+const deployment = await api("/workers/scripts/" + workerName + "/deployments", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    strategy: "percentage",
+    versions: [{ percentage: 100, version_id: versionId }],
+    annotations: {
+      "workers/message": "JARVIS Cloud Phase 2 GitHub Actions deployment",
+      "workers/triggered_by": "github-actions"
+    }
+  })
+});
+
+const deployedVersion = (deployment?.versions || []).find((item) => item.version_id === versionId);
+if (!deployedVersion || deployedVersion.percentage !== 100) {
+  throw new Error("Cloudflare accepted the deployment request but did not confirm 100% traffic on the uploaded version. Inspect Deployments before retrying.");
+}
+
+const [serviceAfter, schedulesAfter, subdomainAfter, bindingsAfter, deploymentList] = await Promise.all([
   api("/workers/services/" + workerName),
   api("/workers/scripts/" + workerName + "/schedules"),
   api(environmentPath + "/subdomain"),
-  api(environmentPath + "/bindings")
+  api(environmentPath + "/bindings"),
+  api("/workers/scripts/" + workerName + "/deployments")
 ]);
 
 const sourceAfter = serviceAfter?.default_environment?.script?.last_deployed_from || "unknown";
 if (JSON.stringify(cronList(schedulesAfter)) !== JSON.stringify(currentCrons)) {
-  throw new Error("The upload succeeded, but Cron schedules changed unexpectedly. Stop before another deployment and inspect the schedule settings.");
+  throw new Error("The upload succeeded, but Cron schedules changed unexpectedly. Stop and inspect the schedule settings before another deployment.");
 }
 if (Boolean(subdomainAfter?.enabled) !== Boolean(subdomainBefore?.enabled) ||
     Boolean(subdomainAfter?.previews_enabled) !== Boolean(subdomainBefore?.previews_enabled)) {
@@ -218,7 +242,15 @@ const retainedBindingsAfter = retainedBindingKeys(bindingsAfter);
 if (JSON.stringify(retainedBindingsAfter) !== JSON.stringify(retainedBindingsBefore)) {
   throw new Error("The Worker variable/secret binding names changed unexpectedly. Stop and inspect the Worker settings before another deployment.");
 }
+const newestDeployment = Array.isArray(deploymentList)
+  ? deploymentList[0]
+  : (deploymentList?.deployments || [])[0];
+const deployedVersionAfter = (newestDeployment?.versions || []).find((item) => item.version_id === versionId);
+if (!deployedVersionAfter || deployedVersionAfter.percentage !== 100) {
+  throw new Error("The uploaded version was not confirmed as the current 100% deployment. Inspect the Deployments page before retrying.");
+}
 
 console.log('Verified: Cloudflare reports last_deployed_from as "' + sourceAfter + '".');
-console.log("Verified: DB/AI bindings, existing variables/secrets, Cron schedules, and workers.dev settings are preserved.");
-console.log("Future deployments through this GitHub workflow will keep using the direct API upload path.");
+console.log("Verified: new version is serving 100% of traffic.");
+console.log("Verified: DB/AI bindings, existing variable/secret binding names, Cron schedules, and workers.dev settings are preserved.");
+console.log("Future deployments through this GitHub workflow will use version upload plus explicit deployment.");
