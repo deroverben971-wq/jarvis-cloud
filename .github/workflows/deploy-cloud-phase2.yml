@@ -93,5 +93,5 @@ jobs:
         run: |
           set -o pipefail
           echo "::add-mask::$CLOUDFLARE_API_TOKEN"
-          npx --yes wrangler@4 deploy --log-level debug --config cloud-phase2/wrangler.jsonc 2>&1 | tee /tmp/jarvis-wrangler-debug.log
+          npx --yes wrangler@4 deploy --config cloud-phase2/wrangler.jsonc 2>&1 | tee /tmp/jarvis-wrangler-deploy.log
 
