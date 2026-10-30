@@ -110,15 +110,33 @@ if (config.ai?.binding !== "AI") {
 }
 
 const environmentPath = "/workers/services/" + workerName + "/environments/" + environmentName;
-const [environmentData, liveBindings, schedulesBefore, subdomainBefore] = await Promise.all([
+const [environmentData, liveBindings, schedulesBefore, subdomainBefore, deploymentsBefore, versionsBefore] = await Promise.all([
   api(environmentPath),
   api(environmentPath + "/bindings"),
   api("/workers/scripts/" + workerName + "/schedules"),
-  api(environmentPath + "/subdomain")
+  api(environmentPath + "/subdomain"),
+  api("/workers/scripts/" + workerName + "/deployments"),
+  api("/workers/scripts/" + workerName + "/versions")
 ]);
 
 await verifyBindings(liveBindings, databases[0].database_id);
 const retainedBindingsBefore = retainedBindingKeys(liveBindings);
+
+const activeDeployment = deploymentsBefore?.deployments?.[0];
+const activeVersions = activeDeployment?.versions || [];
+const latestUploadedVersion = versionsBefore?.items?.[0];
+if (
+  activeVersions.length !== 1 ||
+  activeVersions[0].percentage !== 100 ||
+  !activeVersions[0].version_id ||
+  !latestUploadedVersion?.id ||
+  activeVersions[0].version_id !== latestUploadedVersion.id
+) {
+  throw new Error(
+    "The latest uploaded Worker version is not exactly the single version serving 100% of production traffic. To protect secrets and variables, no version was uploaded. Check the Worker's Versions and Deployments pages before retrying."
+  );
+}
+console.log("Confirmed: the latest uploaded version is the single active 100% production version. Binding inheritance is safe.");
 
 const expectedCrons = (config.triggers?.crons || []).slice().sort();
 const currentCrons = cronList(schedulesBefore);
@@ -213,14 +231,20 @@ if (!deployedVersion || deployedVersion.percentage !== 100) {
   throw new Error("Cloudflare accepted the deployment request but did not confirm 100% traffic on the uploaded version. Inspect Deployments before retrying.");
 }
 
-const [serviceAfter, schedulesAfter, subdomainAfter, bindingsAfter] = await Promise.all([
+const [serviceAfter, schedulesAfter, subdomainAfter, bindingsAfter, deploymentsAfter] = await Promise.all([
   api("/workers/services/" + workerName),
   api("/workers/scripts/" + workerName + "/schedules"),
   api(environmentPath + "/subdomain"),
-  api(environmentPath + "/bindings")
+  api(environmentPath + "/bindings"),
+  api("/workers/scripts/" + workerName + "/deployments")
 ]);
 
 const sourceAfter = serviceAfter?.default_environment?.script?.last_deployed_from || "unknown";
+const activeDeploymentAfter = deploymentsAfter?.deployments?.[0];
+const activeVersionAfter = (activeDeploymentAfter?.versions || []).find((item) => item.version_id === versionId);
+if (!activeVersionAfter || activeVersionAfter.percentage !== 100) {
+  throw new Error("The newest active deployment does not show the uploaded version at 100% traffic. Stop and inspect Deployments.");
+}
 if (JSON.stringify(cronList(schedulesAfter)) !== JSON.stringify(currentCrons)) {
   throw new Error("The upload succeeded, but Cron schedules changed unexpectedly. Stop and inspect the schedule settings before another deployment.");
 }
