@@ -155,21 +155,27 @@ if (latestUploadedVersion.id === activeVersionId) {
   const pendingCreatedMs = Date.parse(pendingCreatedOn || "");
   const pendingAgeMs = Date.now() - pendingCreatedMs;
   const pendingSource = pendingVersionDetails?.metadata?.source ?? latestUploadedVersion.metadata?.source;
+  const pendingAnnotations = pendingVersionDetails?.annotations || {};
   const pendingBindings = pendingVersionDetails?.resources?.bindings;
   const pendingCompatibilityDate = pendingVersionDetails?.resources?.script_runtime?.compatibility_date;
+  const pendingCommitSha = pendingAnnotations["workers/commit_sha"];
+  const pendingMessage = pendingAnnotations["workers/message"];
 
   if (
     !Number.isInteger(activeNumber) ||
     !Number.isInteger(pendingNumber) ||
     pendingNumber !== activeNumber + 1 ||
     pendingSource !== "api" ||
+    pendingMessage !== "JARVIS Cloud Phase 2 GitHub Actions deployment" ||
+    typeof pendingCommitSha !== "string" ||
+    !/^[0-9a-f]{40,64}$/i.test(pendingCommitSha) ||
     !Number.isFinite(pendingCreatedMs) ||
     pendingAgeMs < 0 ||
     pendingAgeMs > 24 * 60 * 60 * 1000 ||
     pendingCompatibilityDate !== config.compatibility_date
   ) {
     throw new Error(
-      "A newer Worker version exists, but it cannot be proven to be the single recent API upload from the failed deployment. No new upload or deployment was made. Inspect Versions and Deployments before retrying."
+      "A newer Worker version exists, but it cannot be proven to be the single recent JARVIS GitHub upload from the failed deployment. No new upload or deployment was made. Inspect Versions and Deployments before retrying."
     );
   }
 
