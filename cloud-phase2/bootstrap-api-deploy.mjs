@@ -149,22 +149,14 @@ const metadata = {
   bindings: configuredBindings,
   compatibility_date: config.compatibility_date,
   keep_bindings: ["plain_text", "json", "secret_text", "secret_key"],
-  observability: {
-    ...(liveScript.observability || {}),
-    ...(config.observability || {})
-  },
   annotations: {
     "workers/message": "JARVIS Cloud Phase 2 GitHub Actions deployment",
     "workers/commit_sha": process.env.GITHUB_SHA || ""
   }
 };
 
-// Preserve dashboard-managed settings that are not declared locally.
+// Carry forward version-level settings that the version-upload API supports.
 if (Array.isArray(liveScript.compatibility_flags)) metadata.compatibility_flags = liveScript.compatibility_flags;
-if (Array.isArray(liveScript.tags)) metadata.tags = liveScript.tags;
-if (typeof liveScript.logpush === "boolean") metadata.logpush = liveScript.logpush;
-if (Array.isArray(liveScript.tail_consumers)) metadata.tail_consumers = liveScript.tail_consumers;
-if (Array.isArray(liveScript.streaming_tail_consumers)) metadata.streaming_tail_consumers = liveScript.streaming_tail_consumers;
 if (liveScript.limits) metadata.limits = liveScript.limits;
 if (liveScript.cache_options) metadata.cache_options = liveScript.cache_options;
 if (liveScript.placement_mode) metadata.placement = { mode: liveScript.placement_mode };
@@ -221,12 +213,11 @@ if (!deployedVersion || deployedVersion.percentage !== 100) {
   throw new Error("Cloudflare accepted the deployment request but did not confirm 100% traffic on the uploaded version. Inspect Deployments before retrying.");
 }
 
-const [serviceAfter, schedulesAfter, subdomainAfter, bindingsAfter, deploymentList] = await Promise.all([
+const [serviceAfter, schedulesAfter, subdomainAfter, bindingsAfter] = await Promise.all([
   api("/workers/services/" + workerName),
   api("/workers/scripts/" + workerName + "/schedules"),
   api(environmentPath + "/subdomain"),
-  api(environmentPath + "/bindings"),
-  api("/workers/scripts/" + workerName + "/deployments")
+  api(environmentPath + "/bindings")
 ]);
 
 const sourceAfter = serviceAfter?.default_environment?.script?.last_deployed_from || "unknown";
@@ -242,14 +233,6 @@ const retainedBindingsAfter = retainedBindingKeys(bindingsAfter);
 if (JSON.stringify(retainedBindingsAfter) !== JSON.stringify(retainedBindingsBefore)) {
   throw new Error("The Worker variable/secret binding names changed unexpectedly. Stop and inspect the Worker settings before another deployment.");
 }
-const newestDeployment = Array.isArray(deploymentList)
-  ? deploymentList[0]
-  : (deploymentList?.deployments || [])[0];
-const deployedVersionAfter = (newestDeployment?.versions || []).find((item) => item.version_id === versionId);
-if (!deployedVersionAfter || deployedVersionAfter.percentage !== 100) {
-  throw new Error("The uploaded version was not confirmed as the current 100% deployment. Inspect the Deployments page before retrying.");
-}
-
 console.log('Verified: Cloudflare reports last_deployed_from as "' + sourceAfter + '".');
 console.log("Verified: new version is serving 100% of traffic.");
 console.log("Verified: DB/AI bindings, existing variable/secret binding names, Cron schedules, and workers.dev settings are preserved.");
