@@ -154,7 +154,7 @@ const metadata = {
     ...(config.observability || {})
   },
   annotations: {
-    "workers/message": "JARVIS Cloud Phase 2 initial API-managed deployment",
+    "workers/message": "JARVIS Cloud Phase 2 GitHub Actions deployment",
     "workers/commit_sha": process.env.GITHUB_SHA || ""
   }
 };
