@@ -93,23 +93,12 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: node cloud-phase2/bootstrap-api-deploy.mjs /tmp/jarvis-cloud-dry-run --check-only
 
-      - name: Bootstrap dashboard-managed Worker with scoped API upload
-        id: bootstrap
+      - name: Deploy Worker using scoped direct API upload
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           GITHUB_SHA: ${{ github.sha }}
         run: node cloud-phase2/bootstrap-api-deploy.mjs /tmp/jarvis-cloud-dry-run
-
-      - name: Deploy Worker to Cloudflare with Wrangler
-        if: steps.bootstrap.outputs.performed != 'true'
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -o pipefail
-          echo "::add-mask::$CLOUDFLARE_API_TOKEN"
-          npx --yes wrangler@4 deploy --config cloud-phase2/wrangler.jsonc 2>&1 | tee /tmp/jarvis-wrangler-deploy.log
 
       - name: Show sanitized Wrangler diagnostics
         if: failure()
