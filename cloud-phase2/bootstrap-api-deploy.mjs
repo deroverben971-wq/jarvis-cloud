@@ -125,18 +125,69 @@ const retainedBindingsBefore = retainedBindingKeys(liveBindings);
 const activeDeployment = deploymentsBefore?.deployments?.[0];
 const activeVersions = activeDeployment?.versions || [];
 const latestUploadedVersion = versionsBefore?.items?.[0];
+
 if (
   activeVersions.length !== 1 ||
   activeVersions[0].percentage !== 100 ||
   !activeVersions[0].version_id ||
-  !latestUploadedVersion?.id ||
-  activeVersions[0].version_id !== latestUploadedVersion.id
+  !latestUploadedVersion?.id
 ) {
-  throw new Error(
-    "The latest uploaded Worker version is not exactly the single version serving 100% of production traffic. To protect secrets and variables, no version was uploaded. Check the Worker's Versions and Deployments pages before retrying."
-  );
+  throw new Error("Expected exactly one 100%-traffic production version and a latest uploaded version. No upload or deployment was made.");
 }
-console.log("Confirmed: the latest uploaded version is the single active 100% production version. Binding inheritance is safe.");
+
+const activeVersionId = activeVersions[0].version_id;
+let pendingVersionId = null;
+
+if (latestUploadedVersion.id === activeVersionId) {
+  console.log("Confirmed: the latest uploaded version is the active 100% production version.");
+  console.log("No unfinished upload is present; a new version can be uploaded safely.");
+} else {
+  // Recover only the single immediately-following API-uploaded version.
+  // This handles a previous run where version upload succeeded but promotion failed.
+  const [activeVersionDetails, pendingVersionDetails] = await Promise.all([
+    api("/workers/scripts/" + workerName + "/versions/" + activeVersionId),
+    api("/workers/scripts/" + workerName + "/versions/" + latestUploadedVersion.id)
+  ]);
+
+  const activeNumber = activeVersionDetails?.number;
+  const pendingNumber = pendingVersionDetails?.number ?? latestUploadedVersion.number;
+  const pendingCreatedOn = pendingVersionDetails?.metadata?.created_on ?? latestUploadedVersion.metadata?.created_on;
+  const pendingCreatedMs = Date.parse(pendingCreatedOn || "");
+  const pendingAgeMs = Date.now() - pendingCreatedMs;
+  const pendingSource = pendingVersionDetails?.metadata?.source ?? latestUploadedVersion.metadata?.source;
+  const pendingBindings = pendingVersionDetails?.resources?.bindings;
+  const pendingCompatibilityDate = pendingVersionDetails?.resources?.script_runtime?.compatibility_date;
+
+  if (
+    !Number.isInteger(activeNumber) ||
+    !Number.isInteger(pendingNumber) ||
+    pendingNumber !== activeNumber + 1 ||
+    pendingSource !== "api" ||
+    !Number.isFinite(pendingCreatedMs) ||
+    pendingAgeMs < 0 ||
+    pendingAgeMs > 24 * 60 * 60 * 1000 ||
+    pendingCompatibilityDate !== config.compatibility_date
+  ) {
+    throw new Error(
+      "A newer Worker version exists, but it cannot be proven to be the single recent API upload from the failed deployment. No new upload or deployment was made. Inspect Versions and Deployments before retrying."
+    );
+  }
+
+  await verifyBindings(pendingBindings, databases[0].database_id);
+  const pendingRetainedBindings = retainedBindingKeys(pendingBindings);
+  if (JSON.stringify(pendingRetainedBindings) !== JSON.stringify(retainedBindingsBefore)) {
+    throw new Error(
+      "The staged version's retained variable/secret binding names do not match production. It will not be promoted."
+    );
+  }
+
+  pendingVersionId = latestUploadedVersion.id;
+  console.log("Found one recent, un-deployed API version immediately after the active production version.");
+  console.log("Its DB/AI resources, compatibility date, and retained variable/secret binding names match production.");
+  console.log("The workflow will reuse this staged version instead of uploading a duplicate.");
+}
+
+
 
 const expectedCrons = (config.triggers?.crons || []).slice().sort();
 const currentCrons = cronList(schedulesBefore);
@@ -186,32 +237,38 @@ if (checkOnly) {
   process.exit(0);
 }
 
-const form = new FormData();
-form.set("metadata", JSON.stringify(metadata));
-form.set(
-  mainModule,
-  new Blob([bundle], { type: "application/javascript+module" }),
-  mainModule
-);
+let versionId = pendingVersionId;
 
-console.log("Preflight checks passed:");
-console.log("- D1 DB binding and AI binding match the live Worker.");
-console.log("- Existing variables and secrets will be retained.");
-console.log("- Cron schedules detected: " + (currentCrons.join(", ") || "none") + ".");
-console.log("- workers.dev enabled: " + subdomainBefore.enabled + "; preview URLs enabled: " + Boolean(subdomainBefore.previews_enabled) + ".");
-console.log("- No database migration or data operation will be performed.");
+if (versionId) {
+  console.log("Reusing the verified staged version from the previous failed promotion.");
+} else {
+  const form = new FormData();
+  form.set("metadata", JSON.stringify(metadata));
+  form.set(
+    mainModule,
+    new Blob([bundle], { type: "application/javascript+module" }),
+    mainModule
+  );
 
-const upload = await api("/workers/scripts/" + workerName + "/versions?bindings_inherit=strict", {
-  method: "POST",
-  body: form
-});
+  console.log("Preflight checks passed:");
+  console.log("- D1 DB binding and AI binding match the live Worker.");
+  console.log("- Existing variables and secrets will be retained.");
+  console.log("- Cron schedules detected: " + (currentCrons.join(", ") || "none") + ".");
+  console.log("- workers.dev enabled: " + subdomainBefore.enabled + "; preview URLs enabled: " + Boolean(subdomainBefore.previews_enabled) + ".");
+  console.log("- No database migration or data operation will be performed.");
 
-const versionId = upload?.id;
-if (typeof versionId !== "string" || !/^[0-9a-f-]{36}$/i.test(versionId)) {
-  throw new Error("Cloudflare did not return a valid uploaded version ID. No production deployment was attempted.");
+  const upload = await api("/workers/scripts/" + workerName + "/versions?bindings_inherit=strict", {
+    method: "POST",
+    body: form
+  });
+
+  versionId = upload?.id;
+  if (typeof versionId !== "string" || !/^[0-9a-f-]{36}$/i.test(versionId)) {
+    throw new Error("Cloudflare did not return a valid uploaded version ID. No production deployment was attempted.");
+  }
+  console.log("Cloudflare accepted a new, not-yet-deployed Worker version. Startup time: " + (upload?.startup_time_ms ?? "not reported") + " ms.");
+  console.log("Existing variable and secret bindings were requested to be retained from the previous upload.");
 }
-console.log("Cloudflare accepted a new, not-yet-deployed Worker version. Startup time: " + (upload?.startup_time_ms ?? "not reported") + " ms.");
-console.log("Existing variable and secret bindings were requested to be retained from the previous upload.");
 
 const deployment = await api("/workers/scripts/" + workerName + "/deployments", {
   method: "POST",
@@ -220,8 +277,7 @@ const deployment = await api("/workers/scripts/" + workerName + "/deployments", 
     strategy: "percentage",
     versions: [{ percentage: 100, version_id: versionId }],
     annotations: {
-      "workers/message": "JARVIS Cloud Phase 2 GitHub Actions deployment",
-      "workers/triggered_by": "github-actions"
+      "workers/message": "JARVIS Cloud Phase 2 GitHub Actions deployment"
     }
   })
 });
