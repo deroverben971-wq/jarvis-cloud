@@ -281,10 +281,7 @@ const deployment = await api("/workers/scripts/" + workerName + "/deployments", 
   headers: { "content-type": "application/json" },
   body: JSON.stringify({
     strategy: "percentage",
-    versions: [{ percentage: 100, version_id: versionId }],
-    annotations: {
-      "workers/message": "JARVIS Cloud Phase 2 GitHub Actions deployment"
-    }
+    versions: [{ percentage: 100, version_id: versionId }]
   })
 });
 
