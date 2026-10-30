@@ -118,15 +118,15 @@ jobs:
               raise SystemExit(0)
           path = paths[-1]
           data = path.read_text(encoding="utf-8", errors="replace")
-          data = re.sub(r"(?i)(authorization\\s*[:=]\\s*)(?:bearer\\s+)?[^\\s,;]+", r"\\1[REDACTED]", data)
-          data = re.sub(r"(?i)(bearer\\s+)[A-Za-z0-9._~+/-]+=*", r"\\1[REDACTED]", data)
-          data = re.sub(r"(?i)(api[_-]?token|access[_-]?token|client[_-]?secret)(\\s*[:=]\\s*)[^\\s,;\\\"]+", r"\\1\\2[REDACTED]", data)
+          data = re.sub(r"(?i)(authorization\s*[:=]\s*)(?:bearer\s+)?[^\s,;]+", r"\1[REDACTED]", data)
+          data = re.sub(r"(?i)(bearer\s+)[A-Za-z0-9._~+/-]+=*", r"\1[REDACTED]", data)
+          data = re.sub(r"(?i)(api[_-]?token|access[_-]?token|client[_-]?secret)(\s*[:=]\s*)[^\s,;\"']+", r"\1\2[REDACTED]", data)
           account_id = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
           if account_id:
               data = data.replace(account_id, "[ACCOUNT_ID_REDACTED]")
           lines = data.splitlines()
           print(f"Sanitized Wrangler internal log: {path.name}")
-          print("\\n".join(lines[-180:]))
+          print("\n".join(lines[-180:]))
           PY
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
