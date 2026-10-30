@@ -51,6 +51,14 @@ function cronList(result) {
   return (result?.schedules || []).map((item) => item.cron).sort();
 }
 
+function retainedBindingKeys(rows) {
+  const retainedTypes = new Set(["plain_text", "json", "secret_text", "secret_key"]);
+  return (Array.isArray(rows) ? rows : [])
+    .filter((item) => retainedTypes.has(item.type))
+    .map((item) => item.type + ":" + item.name)
+    .sort();
+}
+
 async function verifyBindings(rows, databaseId) {
   if (!Array.isArray(rows)) {
     throw new Error("Cloudflare returned an unexpected bindings format; deployment stopped safely.");
@@ -110,6 +118,7 @@ const [environmentData, liveBindings, schedulesBefore, subdomainBefore] = await 
 ]);
 
 await verifyBindings(liveBindings, databases[0].database_id);
+const retainedBindingsBefore = retainedBindingKeys(liveBindings);
 
 const expectedCrons = (config.triggers?.crons || []).slice().sort();
 const currentCrons = cronList(schedulesBefore);
@@ -205,6 +214,10 @@ if (Boolean(subdomainAfter?.enabled) !== Boolean(subdomainBefore?.enabled) ||
   throw new Error("The upload succeeded, but the workers.dev or preview setting changed unexpectedly.");
 }
 await verifyBindings(bindingsAfter, databases[0].database_id);
+const retainedBindingsAfter = retainedBindingKeys(bindingsAfter);
+if (JSON.stringify(retainedBindingsAfter) !== JSON.stringify(retainedBindingsBefore)) {
+  throw new Error("The Worker variable/secret binding names changed unexpectedly. Stop and inspect the Worker settings before another deployment.");
+}
 
 console.log('Verified: Cloudflare reports last_deployed_from as "' + sourceAfter + '".');
 console.log("Verified: DB/AI bindings, existing variables/secrets, Cron schedules, and workers.dev settings are preserved.");
