@@ -104,6 +104,35 @@ The GitHub deployment workflow validates the migration locally but deliberately 
 
 **Current limitation:** a successful upload means that the file reference and metadata were saved. It does not mean the file contents have been read or analyzed. Product extraction and analysis are separate later phases. This phase does not change Gmail sending, reply monitoring, existing outreach campaigns, reminders, Calendar, or the Telegram webhook.
 
+## Sales Intelligence — Phase 2 product document analysis
+
+Sales Intelligence is being added to the existing JARVIS Telegram bot. Upload a product document in the existing authorized chat using Telegram's attachment button → **File** (not Photo).
+
+Available commands:
+- `/sales` — show capabilities and commands.
+- `/sales files` — list the latest uploaded documents.
+- `/sales file ID` — inspect status and any last processing error.
+- `/sales analyze ID` — queue or retry a failed analysis (up to three attempts).
+- `/sales product ID` — show the saved product analysis.
+- `/sales status` — show queue totals.
+
+Accepted intake extensions: PDF, DOCX, PPTX, XLSX, TXT, MD, and CSV. Telegram bot downloads are limited to 20 MB. PDF, DOCX, XLSX, and CSV use the Workers AI Markdown Conversion binding (up to 20 MB). TXT and MD are decoded as UTF-8 and capped at 512 KB to keep local Worker CPU use bounded. PPTX can be registered as a document, but the current converter does not list it as a supported format; export it as PDF before analysis.
+
+A new upload is queued automatically. The existing minute Cron Trigger processes at most one product document per scheduled run. Product analysis extracts at most 60,000 characters and stores the bounded extracted text, a SHA-256 digest, and a structured profile in D1. The report distinguishes document facts, potential benefits, unsupported claims that need verification, and missing information. Document contents are untrusted data; instructions embedded in a product file are not followed.
+
+This phase does not perform online company research, create a sales script, activate an email campaign, or send email. Product analysis never sends email. No R2 binding or new Cloudflare secret is required.
+
+### D1 migrations required before deploying Phase 2
+
+The existing production D1 database needs two additive migrations, in this order:
+
+1. `cloud-phase2/migrations/20261101_sales_documents.sql` — creates the `sales_documents` table and indexes.
+2. `cloud-phase2/migrations/20261102_sales_document_analysis.sql` — creates the extracted-text and product-profile storage table. It requires migration 1.
+
+In Cloudflare Dashboard → Workers & Pages → D1 → existing `jarvis-reminders` database → Console, apply migration 1, then migration 2. The first migration uses `CREATE TABLE IF NOT EXISTS` and is safe to rerun. The second also uses `CREATE TABLE IF NOT EXISTS`. Keep a copy of the success results. These migrations do not delete or modify existing reminder, chat-history, Calendar, or Gmail rows.
+
+The GitHub workflows validate the SQL locally but do not run remote D1 migrations. Do not deploy the new Worker code until both D1 migrations have succeeded. After deployment, test `/sales`, upload a small PDF or TXT file, check `/sales files`, and then use `/sales product ID` after the analysis notification arrives.
+
 ## Gmail outreach (approval-first, low volume)
 
 The separate Apps Script connector in `gmail-outreach-apps-script.js` uses Gmail Advanced Service with the narrow `gmail.send` and `gmail.metadata` scopes. It sends only after `/outreach send ID`, checks reply headers only, and never forwards email bodies to Telegram. Configure Script Property `JARVIS_GMAIL_SHARED_SECRET`; set Cloudflare Worker variable `GMAIL_WEBAPP_URL` and secret `GMAIL_SHARED_SECRET`. Deploy this separate Apps Script Web App before using `/outreach start`.

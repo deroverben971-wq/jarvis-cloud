@@ -1,5 +1,6 @@
 import { isReminderRequest, manilaInputToUtc, parseReminderRequest } from "./reminder-parser.mjs";
 import { validateSalesDocument } from "./sales-documents.mjs";
+import { buildProductAnalysisMessages, getSalesExtractionMode, MAX_PLAIN_TEXT_BYTES, normalizeExtractedText, parseProductProfile } from "./sales-analysis.mjs";
 
 const HELP = [
   "🤖 JARVIS CLOUD — PHASE 2",
@@ -23,12 +24,13 @@ const HELP = [
   "/confirmdelete CODE — delete the exact event after checking its details",
   "/canceldelete CODE — cancel a pending deletion confirmation",
   "",
-  "SALES INTELLIGENCE — PHASE 1 DOCUMENT INTAKE",
+  "SALES INTELLIGENCE — PRODUCT ANALYSIS",
   "/sales — show Sales Intelligence commands",
   "/sales files — list received product documents",
   "/sales file ID — show one received document",
-  "Send a PDF, DOCX, PPTX, TXT, MD, or CSV as a Telegram document (not as a photo).",
-  "This first intake step stores the file reference and metadata; product extraction is a later phase.",
+  "/sales product ID — show the saved product analysis",
+  "/sales analyze ID — queue or retry product analysis",
+  "Upload PDF, DOCX, XLSX, CSV, TXT, or MD as a Telegram document (not as a photo).",
   "",
   "EMAIL OUTREACH",
   "/outreach — show campaign status and commands",
@@ -1214,7 +1216,7 @@ async function handleSalesDocument(env, message) {
   if (existing) {
     await sendText(env, chatId,
       "📁 This document is already registered as Sales file #" + existing.id +
-      ".\nFile: " + existing.file_name +
+      "\nFile: " + existing.file_name +
       "\nStatus: " + existing.status +
       "\nNo duplicate record was created.");
     return;
@@ -1222,17 +1224,10 @@ async function handleSalesDocument(env, message) {
 
   const now = new Date().toISOString();
   await env.DB.prepare(
-    "INSERT OR IGNORE INTO sales_documents (chat_id, telegram_file_id, telegram_file_unique_id, file_name, mime_type, file_size_bytes, caption, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'received', ?, ?)"
+    "INSERT OR IGNORE INTO sales_documents (chat_id, telegram_file_id, telegram_file_unique_id, file_name, mime_type, file_size_bytes, caption, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'analysis_pending', ?, ?)"
   ).bind(
-    chatId,
-    item.fileId,
-    item.fileUniqueId,
-    item.fileName,
-    item.mimeType,
-    item.fileSizeBytes,
-    item.caption,
-    now,
-    now
+    chatId, item.fileId, item.fileUniqueId, item.fileName, item.mimeType,
+    item.fileSizeBytes, item.caption, now, now
   ).run();
 
   const saved = await env.DB.prepare(
@@ -1240,7 +1235,7 @@ async function handleSalesDocument(env, message) {
   ).bind(chatId, item.fileUniqueId).first();
 
   if (!saved) {
-    await sendText(env, chatId, "⚠️ I received the document but couldn't confirm its saved record. No email was sent.");
+    await sendText(env, chatId, "⚠️ I received the document but couldn't confirm its saved record. No analysis or email was started.");
     return;
   }
 
@@ -1253,9 +1248,9 @@ async function handleSalesDocument(env, message) {
     "Sales file: #" + saved.id +
     "\nFile: " + saved.file_name +
     "\nSize: " + sizeLabel +
-    "\nStatus: RECEIVED" +
+    "\nStatus: QUEUED FOR PRODUCT ANALYSIS" +
     (item.caption ? "\nYour note: " + item.caption : "") +
-    "\n\nThe private Telegram file reference and metadata are saved. Document text extraction and product analysis are the next development phase; this upload has not started research or sent any email.\n\nUse /sales files to see your uploaded documents.");
+    "\n\nJARVIS will process one queued document on the next scheduled run. Product analysis uses only this file. No company research or email sending will start automatically.");
 }
 
 function formatDocumentSize(bytes) {
@@ -1267,23 +1262,266 @@ function formatDocumentSize(bytes) {
   return (size / 1024 / 1024).toFixed(2) + " MB";
 }
 
+function formatProfileList(values) {
+  return Array.isArray(values) && values.length
+    ? values.map(value => "• " + String(value).slice(0, 350)).join("\n")
+    : "• Not stated in the document";
+}
+
+function formatProductAnalysis(documentId, profile, truncated = false) {
+  return [
+    "📦 JARVIS PRODUCT ANALYSIS — SALES FILE #" + documentId,
+    "",
+    "Product: " + profile.product_name,
+    "Category: " + (profile.category || "Not stated"),
+    "",
+    "SUMMARY",
+    profile.summary,
+    "",
+    "PROBLEMS IT MAY ADDRESS",
+    formatProfileList(profile.problems_solved),
+    "",
+    "POTENTIAL CUSTOMER TYPES",
+    formatProfileList(profile.target_customer_types),
+    "",
+    "FEATURES",
+    formatProfileList(profile.features),
+    "",
+    "POTENTIAL BENEFITS",
+    formatProfileList(profile.benefits),
+    "",
+    "DIFFERENTIATORS",
+    formatProfileList(profile.differentiators),
+    "",
+    "PRICING",
+    profile.pricing || "Not stated in the document",
+    "",
+    "LIMITATIONS",
+    formatProfileList(profile.limitations),
+    "",
+    "CLAIMS TO VERIFY",
+    formatProfileList(profile.claims_to_verify),
+    "",
+    "MISSING INFORMATION",
+    formatProfileList(profile.missing_information),
+    "",
+    truncated ? "⚠️ Only the first 60,000 extracted characters were analyzed." : "Analysis is limited to the content found in the uploaded document.",
+    "No potential clients have been contacted. No email was sent."
+  ].join("\n").slice(0, 3800);
+}
+
+async function sha256Hex(value) {
+  const bytes = new TextEncoder().encode(String(value));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function processSalesDocumentQueue(env) {
+  if (!env.DB || !env.AI || !env.TELEGRAM_BOT_TOKEN) return;
+
+  const doc = await env.DB.prepare(
+    "SELECT d.id, d.chat_id, d.telegram_file_id, d.file_name, d.mime_type, d.file_size_bytes, a.extracted_markdown, a.attempts " +
+    "FROM sales_documents d LEFT JOIN sales_document_analysis a ON a.document_id=d.id " +
+    "WHERE d.status='analysis_pending' AND COALESCE(a.attempts, 0)<3 ORDER BY d.id LIMIT 1"
+  ).first();
+  if (!doc) return;
+
+  const claimed = await env.DB.prepare(
+    "UPDATE sales_documents SET status='analyzing', updated_at=? WHERE id=? AND status='analysis_pending'"
+  ).bind(new Date().toISOString(), doc.id).run();
+  if (!claimed.meta?.changes) return;
+
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO sales_document_analysis (document_id) VALUES (?)"
+  ).bind(doc.id).run();
+  await env.DB.prepare(
+    "UPDATE sales_document_analysis SET attempts=attempts+1, last_error=NULL WHERE document_id=?"
+  ).bind(doc.id).run();
+
+  let stage = "checking document format";
+  try {
+    let extractedText = String(doc.extracted_markdown || "");
+    let truncated = false;
+
+    if (!extractedText) {
+      const mode = getSalesExtractionMode(doc.file_name);
+      if (!mode.ok) throw new Error(mode.error);
+
+      stage = "requesting the Telegram download";
+      const infoResponse = await fetch(
+        "https://api.telegram.org/bot" + env.TELEGRAM_BOT_TOKEN + "/getFile",
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ file_id: doc.telegram_file_id })
+        }
+      );
+      const info = await infoResponse.json().catch(() => null);
+      if (!infoResponse.ok || !info?.ok || !info?.result?.file_path) {
+        throw new Error("Telegram did not return a usable file download path.");
+      }
+
+      const filePath = String(info.result.file_path);
+      if (!/^[A-Za-z0-9_./-]{1,512}$/.test(filePath) || filePath.includes("..")) {
+        throw new Error("Telegram returned an unexpected file path.");
+      }
+
+      stage = "downloading the private Telegram document";
+      const fileResponse = await fetch(
+        "https://api.telegram.org/file/bot" + env.TELEGRAM_BOT_TOKEN + "/" + filePath
+      );
+      if (!fileResponse.ok) throw new Error("Telegram document download failed (HTTP " + fileResponse.status + ").");
+
+      const buffer = await fileResponse.arrayBuffer();
+      if (!buffer.byteLength || buffer.byteLength > 20 * 1024 * 1024) {
+        throw new Error("The downloaded file is empty or exceeds the 20 MB bot-download limit.");
+      }
+
+      if (mode.mode === "plain_text") {
+        stage = "decoding the text document";
+        if (buffer.byteLength > MAX_PLAIN_TEXT_BYTES) {
+          throw new Error("TXT and MD documents must be 512 KB or smaller on the Free Worker. Export longer documents as PDF.");
+        }
+        try {
+          extractedText = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+        } catch {
+          throw new Error("The text document is not valid UTF-8. Save it as UTF-8 and upload it again.");
+        }
+      } else {
+        stage = "converting the document to text with Workers AI";
+        if (typeof env.AI.toMarkdown !== "function") {
+          throw new Error("The current Workers AI binding does not expose document-to-Markdown conversion.");
+        }
+        const converted = await env.AI.toMarkdown(
+          {
+            name: String(doc.file_name),
+            blob: new Blob([buffer], { type: String(doc.mime_type || "application/octet-stream") })
+          },
+          {
+            conversionOptions: {
+              output: { format: "markdown" },
+              pdf: { metadata: false }
+            }
+          }
+        );
+        const result = Array.isArray(converted) ? converted[0] : converted;
+        if (!result || result.format === "error" || typeof result.data !== "string") {
+          throw new Error(String(result?.error || "Workers AI could not extract readable document text.").slice(0, 180));
+        }
+        extractedText = result.data;
+      }
+    }
+
+    stage = "validating extracted text";
+    const normalized = normalizeExtractedText(extractedText);
+    if (!normalized.ok) throw new Error(normalized.error);
+    extractedText = normalized.text;
+    truncated = normalized.truncated;
+    const digest = await sha256Hex(extractedText);
+
+    await env.DB.prepare(
+      "UPDATE sales_document_analysis SET extracted_markdown=?, extracted_sha256=? WHERE document_id=?"
+    ).bind(extractedText, digest, doc.id).run();
+
+    stage = "building the product profile with Workers AI";
+    const messages = buildProductAnalysisMessages(doc.file_name, extractedText, truncated);
+    const result = await env.AI.run(CLOUD_AI_MODEL, {
+      messages,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "jarvis_product_profile",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              product_name: { type: "string" },
+              category: { type: "string" },
+              summary: { type: "string" },
+              problems_solved: { type: "array", items: { type: "string" } },
+              target_customer_types: { type: "array", items: { type: "string" } },
+              features: { type: "array", items: { type: "string" } },
+              benefits: { type: "array", items: { type: "string" } },
+              differentiators: { type: "array", items: { type: "string" } },
+              pricing: { type: "string" },
+              limitations: { type: "array", items: { type: "string" } },
+              claims_to_verify: { type: "array", items: { type: "string" } },
+              missing_information: { type: "array", items: { type: "string" } }
+            },
+            required: [
+              "product_name", "category", "summary", "problems_solved", "target_customer_types",
+              "features", "benefits", "differentiators", "pricing", "limitations",
+              "claims_to_verify", "missing_information"
+            ],
+            additionalProperties: false
+          }
+        }
+      },
+      max_completion_tokens: 1200,
+      reasoning_effort: "low",
+      chat_template_kwargs: { enable_thinking: false },
+      temperature: 0.1
+    });
+
+    const profileResult = parseProductProfile(extractAIText(result));
+    if (!profileResult.ok) throw new Error(profileResult.error);
+
+    const now = new Date().toISOString();
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE sales_document_analysis SET product_profile_json=?, analyzed_at=?, last_error=NULL WHERE document_id=?"
+      ).bind(JSON.stringify(profileResult.profile), now, doc.id),
+      env.DB.prepare(
+        "UPDATE sales_documents SET status='analyzed', updated_at=? WHERE id=? AND status='analyzing'"
+      ).bind(now, doc.id)
+    ]);
+
+    try {
+      await sendText(env, doc.chat_id, formatProductAnalysis(doc.id, profileResult.profile, truncated));
+    } catch (notifyError) {
+      console.error("Sales document analysis was saved but Telegram notification failed:", notifyError?.message || "unknown error");
+    }
+  } catch (error) {
+    const reason = String(error?.message || "unknown error").replace(/[\r\n\t]/g, " ").slice(0, 220);
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      "UPDATE sales_documents SET status='failed', updated_at=? WHERE id=? AND status='analyzing'"
+    ).bind(now, doc.id).run();
+    await env.DB.prepare(
+      "UPDATE sales_document_analysis SET last_error=? WHERE document_id=?"
+    ).bind((stage + ": " + reason).slice(0, 300), doc.id).run();
+
+    try {
+      await sendText(env, doc.chat_id,
+        "⚠️ I couldn't finish product analysis for Sales file #" + doc.id +
+        " at the step: " + stage + ".\nReason: " + reason +
+        "\nThe file reference is still saved. Use /sales analyze " + doc.id + " to retry (up to 3 attempts). No email or outreach was started.");
+    } catch (notifyError) {
+      console.error("Could not notify Telegram about a Sales analysis error:", notifyError?.message || "unknown error");
+    }
+  }
+}
+
 async function handleSalesCommand(env, chatId, raw) {
   const rest = raw.replace(/^\/sales(?:@\w+)?/i, "").trim();
   const lower = rest.toLowerCase();
 
   if (!lower || lower === "help") {
     await sendText(env, chatId, [
-      "🧠 JARVIS SALES INTELLIGENCE — PHASE 1",
+      "🧠 JARVIS SALES INTELLIGENCE — PRODUCT ANALYSIS",
       "",
       "Upload a product document in this Telegram chat using the attachment button → File.",
-      "Accepted: PDF, DOCX, PPTX, TXT, MD, and CSV (maximum 20 MB).",
+      "Supported for analysis: PDF, DOCX, XLSX, and CSV up to 20 MB; TXT and MD up to 512 KB.",
+      "PPTX files can be stored, but export them as PDF before asking JARVIS to analyze them.",
       "",
       "/sales files — list received product documents",
-      "/sales file ID — inspect one document record",
-      "/sales status — show intake totals",
+      "/sales file ID — inspect document status",
+      "/sales product ID — view a saved product profile",
+      "/sales analyze ID — queue or retry a failed analysis",
+      "/sales status — show analysis totals",
       "",
-      "Current phase: secure document intake and metadata storage. Product extraction, deep research, scripts, and campaign automation are not enabled yet.",
-      "No emails are sent by Sales Intelligence in this phase."
+      "Uploaded documents are queued for analysis by the existing minute Cron Trigger. Business research, script creation, and campaign automation are later phases.",
+      "Sales Intelligence never sends an email during product analysis."
     ].join("\n"));
     return;
   }
@@ -1294,7 +1532,7 @@ async function handleSalesCommand(env, chatId, raw) {
     ).bind(chatId).all();
     const files = rows.results || [];
     await sendText(env, chatId, files.length
-      ? "📁 RECEIVED PRODUCT DOCUMENTS\n\n" + files.map(file =>
+      ? "📁 PRODUCT DOCUMENTS\n\n" + files.map(file =>
         "#" + file.id + " · " + file.file_name +
         "\n" + formatDocumentSize(file.file_size_bytes) + " · " + file.status +
         "\nReceived: " + file.created_at
@@ -1304,41 +1542,109 @@ async function handleSalesCommand(env, chatId, raw) {
   }
 
   if (lower === "status") {
-    const row = await env.DB.prepare(
-      "SELECT COUNT(*) AS total FROM sales_documents WHERE chat_id=?"
-    ).bind(chatId).first();
+    const rows = await env.DB.prepare(
+      "SELECT status, COUNT(*) AS total FROM sales_documents WHERE chat_id=? GROUP BY status"
+    ).bind(chatId).all();
+    const counts = new Map((rows.results || []).map(row => [row.status, Number(row.total || 0)]));
+    const total = Array.from(counts.values()).reduce((a, b) => a + b, 0);
     await sendText(env, chatId,
       "🧠 SALES INTELLIGENCE STATUS\n" +
       "Document intake: ✅ enabled\n" +
-      "Documents registered: " + Number(row?.total || 0) +
-      "\nProduct extraction: not enabled yet\nBusiness research: not enabled yet\nEmail automation: not enabled in Sales Intelligence.");
+      "Documents registered: " + total +
+      "\nQueued: " + (counts.get("analysis_pending") || 0) +
+      "\nAnalyzing: " + (counts.get("analyzing") || 0) +
+      "\nAnalyzed: " + (counts.get("analyzed") || 0) +
+      "\nFailed: " + (counts.get("failed") || 0) +
+      "\nBusiness research: not enabled yet\nEmail automation: not enabled in Sales Intelligence.");
     return;
   }
 
-  const match = /^file\s+(\d+)$/i.exec(rest);
-  if (match) {
-    const id = Number(match[1]);
+  const analyzeMatch = /^analyze\s+(\d+)$/i.exec(rest);
+  if (analyzeMatch) {
+    const id = Number(analyzeMatch[1]);
     const file = await env.DB.prepare(
-      "SELECT id, file_name, mime_type, file_size_bytes, caption, status, created_at, updated_at FROM sales_documents WHERE id=? AND chat_id=?"
+      "SELECT d.id, d.status, COALESCE(a.attempts,0) AS attempts FROM sales_documents d " +
+      "LEFT JOIN sales_document_analysis a ON a.document_id=d.id WHERE d.id=? AND d.chat_id=?"
     ).bind(id, chatId).first();
     if (!file) {
       await sendText(env, chatId, "I couldn't find Sales file #" + id + ".");
       return;
     }
-    await sendText(env, chatId,
-      "📄 SALES DOCUMENT #" + file.id +
-      "\nFile: " + file.file_name +
-      "\nType: " + file.mime_type +
-      "\nSize: " + formatDocumentSize(file.file_size_bytes) +
-      "\nStatus: " + file.status +
-      "\nReceived: " + file.created_at +
-      (file.caption ? "\nNote: " + file.caption : "") +
-      "\n\nThe content has not been extracted or analyzed yet.");
+    if (file.status === "analyzed") {
+      await sendText(env, chatId, "Sales file #" + id + " is already analyzed. Use /sales product " + id + " to see its profile.");
+      return;
+    }
+    if (file.status === "analysis_pending" || file.status === "analyzing") {
+      await sendText(env, chatId, "Sales file #" + id + " is already " + file.status + ".");
+      return;
+    }
+    if (Number(file.attempts) >= 3) {
+      await sendText(env, chatId, "Sales file #" + id + " reached the 3-attempt limit. Please upload a corrected or smaller document instead of retrying indefinitely.");
+      return;
+    }
+    const updated = await env.DB.prepare(
+      "UPDATE sales_documents SET status='analysis_pending', updated_at=? WHERE id=? AND chat_id=? AND status IN ('received','failed')"
+    ).bind(new Date().toISOString(), id, chatId).run();
+    if (!updated.meta?.changes) {
+      await sendText(env, chatId, "Sales file #" + id + " changed state before I could queue it. Check /sales file " + id + " and try again.");
+      return;
+    }
+    await sendText(env, chatId, "✅ Sales file #" + id + " has been queued for product analysis. The existing minute Cron Trigger will process it. No email will be sent.");
     return;
   }
 
-  await sendText(env, chatId, "Use /sales, /sales files, /sales file ID, or /sales status.");
+  const productMatch = /^product\s+(\d+)$/i.exec(rest);
+  if (productMatch) {
+    const id = Number(productMatch[1]);
+    const row = await env.DB.prepare(
+      "SELECT d.file_name, d.status, a.product_profile_json FROM sales_documents d " +
+      "LEFT JOIN sales_document_analysis a ON a.document_id=d.id WHERE d.id=? AND d.chat_id=?"
+    ).bind(id, chatId).first();
+    if (!row) {
+      await sendText(env, chatId, "I couldn't find Sales file #" + id + ".");
+      return;
+    }
+    if (!row.product_profile_json) {
+      await sendText(env, chatId, "Sales file #" + id + " has no completed product profile yet. Current status: " + row.status + ".");
+      return;
+    }
+    let profile;
+    try { profile = JSON.parse(row.product_profile_json); }
+    catch {
+      await sendText(env, chatId, "The saved product profile for file #" + id + " could not be read. No email was sent.");
+      return;
+    }
+    await sendText(env, chatId, formatProductAnalysis(id, profile, false));
+    return;
+  }
+
+  const fileMatch = /^file\s+(\d+)$/i.exec(rest);
+  if (fileMatch) {
+    const id = Number(fileMatch[1]);
+    const row = await env.DB.prepare(
+      "SELECT d.id, d.file_name, d.mime_type, d.file_size_bytes, d.caption, d.status, d.created_at, a.last_error " +
+      "FROM sales_documents d LEFT JOIN sales_document_analysis a ON a.document_id=d.id WHERE d.id=? AND d.chat_id=?"
+    ).bind(id, chatId).first();
+    if (!row) {
+      await sendText(env, chatId, "I couldn't find Sales file #" + id + ".");
+      return;
+    }
+    await sendText(env, chatId,
+      "📄 SALES DOCUMENT #" + row.id +
+      "\nFile: " + row.file_name +
+      "\nType: " + row.mime_type +
+      "\nSize: " + formatDocumentSize(row.file_size_bytes) +
+      "\nStatus: " + row.status +
+      "\nReceived: " + row.created_at +
+      (row.caption ? "\nNote: " + row.caption : "") +
+      (row.last_error ? "\nLast error: " + row.last_error : "") +
+      (row.status === "failed" ? "\nRetry with /sales analyze " + id : ""));
+    return;
+  }
+
+  await sendText(env, chatId, "Use /sales, /sales files, /sales file ID, /sales product ID, /sales analyze ID, or /sales status.");
 }
+
 
 function isCloudCommand(message) {
   const text = (message.text || "").trim().toLowerCase();
@@ -1891,6 +2197,12 @@ export default {
       } catch (error) {
         console.error("Outreach scheduled processing failed:", error?.message || "unknown");
       }
+    }
+
+    try {
+      await processSalesDocumentQueue(env);
+    } catch (error) {
+      console.error("Sales document queue processing failed:", error?.message || "unknown");
     }
   }
 };
