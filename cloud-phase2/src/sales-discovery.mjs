@@ -235,7 +235,7 @@ export function renderFederalAwardCandidates(result, productName) {
     "",
     "NEXT STEP",
     "Review an organization's official website, then use /sales research PRODUCT_FILE_ID | Organization name | https://official-site.example for the existing product-fit check.",
-    "This lookup collected organization-level award data only. It did not collect personal emails, add prospects to campaigns, or send email."
+    "This lookup collected organization-level award data only. It did not collect personal emails or add prospects to campaigns. No email was sent."
   );
   return lines.join("\n").slice(0, 3900);
 }
