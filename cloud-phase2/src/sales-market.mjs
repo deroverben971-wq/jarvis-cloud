@@ -77,13 +77,41 @@ export function parseSalesMarketResult(raw) {
   return {
     ok: true,
     plan: {
-      naics_sectors: Array.isArray(value.naics_sectors) ? value.naics_sectors.slice(0, 3).map(item => ({ code: cleanText(item && item.code, 10), name: cleanText(item && item.name, 100), reason: cleanText(item && item.reason, 250) })).filter(item => /^(11|21|22|23|31|32|33|42|44|45|48|49|51|52|53|54|55|56|61|62|71|72|81|92)$/.test(item.code) && item.name) : [],
+      naics_sectors: Array.isArray(value.naics_sectors) ? value.naics_sectors.slice(0, 3).map(item => {
+        const rawCode = cleanText(item && item.code, 10);
+        const prefix = /^\\d{2,6}$/.test(rawCode) ? rawCode.slice(0, 2) : rawCode;
+        return { code: prefix, name: cleanText(item && item.name, 100), reason: cleanText(item && item.reason, 250) };
+      }).filter(item => /^(11|21|22|23|31|32|33|42|44|45|48|49|51|52|53|54|55|56|61|62|71|72|81|92)$/.test(item.code) && item.name) : [],
       ideal_customer_profile: cleanText(value.ideal_customer_profile, 900),
       segments,
       exclusions: cleanList(value.exclusions, 6, 180),
       caveats: cleanText(value.caveats, 500)
     }
   };
+}
+
+export function inferNAICSSectorsFromProduct(productProfile, marketPlan = {}) {
+  const product = productProfile && typeof productProfile === "object" ? productProfile : {};
+  const plan = marketPlan && typeof marketPlan === "object" ? marketPlan : {};
+  const searchable = [
+    product.product_name,
+    product.category,
+    product.summary,
+    ...(Array.isArray(product.problems_solved) ? product.problems_solved : []),
+    ...(Array.isArray(product.target_customer_types) ? product.target_customer_types : []),
+    ...(Array.isArray(product.features) ? product.features : []),
+    ...(Array.isArray(product.benefits) ? product.benefits : []),
+    ...(Array.isArray(plan.segments) ? plan.segments.flatMap(item => [item && item.name, item && item.why_fit]) : [])
+  ].map(value => cleanText(value, 500)).join(" ").toLowerCase();
+
+  if (/\b(construction|contractors?|subcontractors?|builders?|roofing|hvac|electrical contracting|plumbing|excavation|remodeling|commercial building)\b/i.test(searchable)) {
+    return [{
+      code: "23",
+      name: "Construction",
+      reason: "The uploaded product profile identifies contractors or construction work as its target market."
+    }];
+  }
+  return [];
 }
 
 export function renderSalesMarketPlan(productName, plan) {
