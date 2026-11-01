@@ -225,7 +225,8 @@ CREATE INDEX IF NOT EXISTS idx_sales_document_analysis_attempts
 CREATE TABLE IF NOT EXISTS sales_research (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   chat_id TEXT NOT NULL,
-  company_name TEXT NOT NULL,
+  product_document_id INTEGER NOT NULL,
+  prospect_name TEXT NOT NULL,
   website_url TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending','researching','completed','failed')),
@@ -234,7 +235,8 @@ CREATE TABLE IF NOT EXISTS sales_research (
   source_urls_json TEXT NOT NULL DEFAULT '[]',
   last_error TEXT,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (product_document_id) REFERENCES sales_documents(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_sales_research_chat_created
   ON sales_research (chat_id, id DESC);
