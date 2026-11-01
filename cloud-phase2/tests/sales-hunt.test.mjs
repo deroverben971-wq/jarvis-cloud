@@ -151,7 +151,7 @@ test("tries the Ohio fallback after three failed nationwide directory attempts",
     assert.equal(calls, 5); // three nationwide attempts plus two ProFix transports
     assert.equal(result.ok, false);
     assert.match(result.error, /HTTP 503 after 3 attempts/);
-    assert.match(result.error, /Ohio fallback: ProFix Hugging Face snapshot returned HTTP 503; ProFix live feed returned HTTP 503/);
+    assert.match(result.error, /Ohio fallback: ProFix compact JSON feed returned HTTP 503; ProFix CSV export returned HTTP 503/);
     assert.deepEqual(result.candidates, []);
   } finally {
     globalThis.fetch = originalFetch;
@@ -159,7 +159,7 @@ test("tries the Ohio fallback after three failed nationwide directory attempts",
 });
 
 
-test("falls back to the Ohio ProFix catalogue and keeps only organization-level fields", async () => {
+test("uses the documented compact ProFix JSON feed and keeps only organization-level fields", async () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;
   globalThis.fetch = async (url) => {
@@ -167,15 +167,12 @@ test("falls back to the Ohio ProFix catalogue and keeps only organization-level 
     if (String(url).includes("companies.directory")) {
       return { ok: false, status: 503, headers: { get: () => "0" } };
     }
-    assert.equal(String(url), "https://huggingface.co/datasets/Pisces89/ohio-home-services-pros/resolve/main/profix-ohio-pros-latest.json");
+    assert.equal(String(url), "https://profixdirectory.com/api/pros.json");
     return {
       ok: true,
       json: async () => ({
-        dataset: "profix-ohio-pros",
-        version: "2026-05",
-        coverage_state: "OH",
-        record_count: 3,
-        record: [
+        total: 3,
+        pros: [
           {
             name: "Example Concrete LLC",
             state: "OH",
@@ -193,16 +190,14 @@ test("falls back to the Ohio ProFix catalogue and keeps only organization-level 
             state: "PA",
             city: "Pittsburgh",
             trades: ["concrete"],
-            website_url: "https://out-of-state.example",
-            slug: "out-of-state"
+            website_url: "https://out-of-state.example"
           },
           {
             name: "Irrelevant repair shop",
             state: "OH",
             city: "Cleveland",
             trades: ["tech-repair"],
-            website_url: "https://repair-shop.example",
-            slug: "repair-shop"
+            website_url: "https://repair-shop.example"
           }
         ]
       })
@@ -212,14 +207,51 @@ test("falls back to the Ohio ProFix catalogue and keeps only organization-level 
     const result = await searchUSConstructionCompanies({ limit: 5 });
     assert.equal(calls, 4);
     assert.equal(result.ok, true);
-    assert.equal(result.sourceLabel, "ProFix Directory (Ohio) — monthly Hugging Face snapshot");
+    assert.equal(result.sourceLabel, "ProFix Directory (Ohio) — compact JSON feed");
     assert.equal(result.scopeLabel, "Ohio only");
-    assert.equal(result.snapshotVersion, "2026-05");
+    assert.equal(result.total, 3);
     assert.equal(result.candidates.length, 1);
     assert.equal(result.candidates[0].name, "Example Concrete LLC");
     assert.equal(result.candidates[0].location, "Columbus, Franklin, Ohio, United States");
     assert.deepEqual(result.candidates[0].trades, ["concrete", "roofing"]);
     assert.equal(result.candidates[0].profileUrl, "https://profixdirectory.com/pro/example-concrete-columbus");
+    assert.equal("email" in result.candidates[0], false);
+    assert.equal("phone" in result.candidates[0], false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("parses quoted CSV fields after the compact ProFix JSON feed is unavailable", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async (url) => {
+    calls += 1;
+    const requested = String(url);
+    if (requested.includes("companies.directory")) {
+      return { ok: false, status: 503, headers: { get: () => "0" } };
+    }
+    if (requested === "https://profixdirectory.com/api/pros.json") {
+      return { ok: false, status: 429 };
+    }
+    assert.equal(requested, "https://profixdirectory.com/api/pros.csv");
+    return {
+      ok: true,
+      text: async () => [
+        "name,state,city,county,trades,website_url,slug,verification_tier,email,phone",
+        '"Example Concrete, LLC",OH,Columbus,Franklin,"[""concrete"",""roofing""]",https://example-concrete.example,example-concrete-columbus,verified-profile,owner@gmail.com,+1 555 0100'
+      ].join("\n")
+    };
+  };
+  try {
+    const result = await searchUSConstructionCompanies({ limit: 5 });
+    assert.equal(calls, 5);
+    assert.equal(result.ok, true);
+    assert.equal(result.sourceLabel, "ProFix Directory (Ohio) — CSV export");
+    assert.equal(result.candidates.length, 1);
+    assert.equal(result.candidates[0].name, "Example Concrete, LLC");
+    assert.deepEqual(result.candidates[0].trades, ["concrete", "roofing"]);
+    assert.equal(result.candidates[0].websiteUrl, "https://example-concrete.example/");
     assert.equal("email" in result.candidates[0], false);
     assert.equal("phone" in result.candidates[0], false);
   } finally {
