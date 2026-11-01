@@ -104,6 +104,33 @@ The GitHub deployment workflow validates the migration locally but deliberately 
 
 **Current limitation:** a successful upload means that the file reference and metadata were saved. It does not mean the file contents have been read or analyzed. Product extraction and analysis are separate later phases. This phase does not change Gmail sending, reply monitoring, existing outreach campaigns, reminders, Calendar, or the Telegram webhook.
 
+## Sales Intelligence — Phase 3 company research and permission-first outreach
+
+Use the existing Telegram chat:
+
+- `/sales research Company Name | https://official-company-website.example` — queue research of a supplied official company website.
+- `/sales research list` — list recent research requests.
+- `/sales research ID` — view the completed report.
+
+The researcher checks the supplied HTTPS homepage and up to two same-origin Contact/About/Services pages. It does not run a general search engine or crawl the wider web. It extracts only generic role-based addresses (such as `info@`, `sales@`, and `contact@`) listed on those pages; it does not collect named personal email addresses. Every report includes the pages used as sources and distinguishes possible product fit from verified facts.
+
+A publicly listed email address is a contact channel, **not permission to send marketing**. Publicly found addresses are stored as `public_contact_only` and are never automatically added to an outreach campaign.
+
+### Permission and parent/guardian review gates
+
+The existing `/outreach` workflow now requires:
+1. Genuine recipient opt-in with a written evidence/source note: `/outreach permission ID | source of explicit opt-in`. A website contact page or publicly listed inbox does not qualify.
+2. Parent/guardian campaign review: `/outreach guardian-approve CAMPAIGN_ID | adult name`.
+3. Parent/guardian review of the exact recipient and exact generated draft: `/outreach guardian-review ID | adult name`.
+
+The parent/guardian must personally review and enter the review commands. These are user-declared audit records, not identity verification. Initial drafts can be generated for review, but no send is allowed until all gates pass.
+
+After eligible drafts have been individually reviewed, `/outreach auto-on` enables scheduled sending of only those reviewed, documented-opt-in drafts. `/outreach auto-off` disables queued initial sends. The existing hard limit remains three total initial/follow-up messages per rolling 24 hours. Reply detection, suppression checks, campaign pause/close, and follow-up checks remain active. No bulk list import or address harvesting is implemented.
+
+### One-time D1 migration before deploying Phase 3
+
+Apply `cloud-phase2/migrations/20261103_sales_research_permission_gates.sql` to the existing `jarvis-reminders` database **after** the two Phase 2 Sales Intelligence migrations and before deploying the new Worker. It adds research storage and columns to the existing outreach tables; it does not delete existing data. This is a one-time additive schema change and should not be pasted a second time after it succeeds.
+
 ## Sales Intelligence — Phase 2 product document analysis
 
 Sales Intelligence is being added to the existing JARVIS Telegram bot. Upload a product document in the existing authorized chat using Telegram's attachment button → **File** (not Photo).
