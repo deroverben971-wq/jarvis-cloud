@@ -4,7 +4,7 @@
 
 ALTER TABLE outreach_campaigns ADD COLUMN guardian_approved_at TEXT;
 ALTER TABLE outreach_campaigns ADD COLUMN guardian_approved_by TEXT;
-ALTER TABLE outreach_campaigns ADD COLUMN auto_send_enabled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE outreach_campaigns ADD COLUMN auto_send_enabled INTEGER NOT NULL DEFAULT 0 CHECK (auto_send_enabled IN (0,1));
 
 ALTER TABLE outreach_prospects ADD COLUMN contact_permission_status TEXT NOT NULL DEFAULT 'unverified'
   CHECK (contact_permission_status IN ('unverified', 'documented_opt_in', 'not_authorized', 'opted_out'));
@@ -12,6 +12,7 @@ ALTER TABLE outreach_prospects ADD COLUMN permission_source TEXT;
 ALTER TABLE outreach_prospects ADD COLUMN permission_verified_at TEXT;
 ALTER TABLE outreach_prospects ADD COLUMN guardian_reviewed_at TEXT;
 ALTER TABLE outreach_prospects ADD COLUMN guardian_reviewed_by TEXT;
+ALTER TABLE outreach_prospects ADD COLUMN contact_source_url TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_outreach_prospects_permission
   ON outreach_prospects (chat_id, contact_permission_status, guardian_reviewed_at, status);
