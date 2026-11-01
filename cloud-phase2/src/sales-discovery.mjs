@@ -53,7 +53,7 @@ export function normalizeNAICSSectors(value) {
   if (!Array.isArray(value)) return [];
   const seen = new Set();
   return value.map(item => ({
-    code: clean(item && item.code, 2),
+    code: clean(item && item.code, 10),
     name: clean(item && item.name, 100),
     reason: clean(item && item.reason, 220)
   })).filter(item => {
@@ -151,6 +151,7 @@ export async function searchFederalAwardRecipients(sectors, options = {}) {
           location: locationLabel(row["Recipient Location"]),
           uei,
           awardCount: 0,
+          awardKeys: new Set(),
           latestAwardDate: "",
           totalAwardValueInReturnedSample: 0,
           sectors: new Set(),
@@ -158,6 +159,9 @@ export async function searchFederalAwardRecipients(sectors, options = {}) {
         };
         grouped.set(key, company);
       }
+      const awardKey = clean(row.generated_internal_id, 160) || award.awardId;
+      if (awardKey && company.awardKeys.has(awardKey)) continue;
+      if (awardKey) company.awardKeys.add(awardKey);
       company.awardCount += 1;
       company.totalAwardValueInReturnedSample += award.amount;
       company.sectors.add(sector.code + " — " + sector.name);
@@ -169,6 +173,7 @@ export async function searchFederalAwardRecipients(sectors, options = {}) {
   const candidates = [...grouped.values()]
     .map(company => ({
       ...company,
+      awardKeys: undefined,
       sectors: [...company.sectors],
       totalAwardValueInReturnedSample: Math.round(company.totalAwardValueInReturnedSample * 100) / 100,
       awards: company.awards.sort((a, b) => b.awardDate.localeCompare(a.awardDate))
