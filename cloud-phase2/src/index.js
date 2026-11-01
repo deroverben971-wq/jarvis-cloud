@@ -32,7 +32,7 @@ const HELP = [
   "/sales file ID — show one received document",
   "/sales product ID — show the saved product analysis",
   "/sales analyze ID — queue or retry product analysis",
-  "/sales research Company | https://official-site.example — research an official company website",
+  "/sales research PRODUCT_FILE_ID | Prospect Name | https://official-site.example — compare a prospect with a product's target market",
   "/sales research list — list recent company research",
   "/sales research ID — view a research report",
   "/sales prospect RESEARCH_ID | email | contact — add a researched public inbox to a campaign",
@@ -1729,20 +1729,28 @@ async function fetchResearchHtml(url, expectedOrigin) {
 
 function renderSalesResearchReport(row, profile, emails, sources) {
   const lines = [
-    "🏢 COMPANY RESEARCH #" + row.id,
-    "Company: " + row.company_name,
+    "🔎 PROSPECT RESEARCH #" + row.id,
+    "Prospect: " + row.prospect_name,
     "Website: " + row.website_url,
+    "Product: " + (profile.product_name || ("Sales file #" + row.product_document_id)),
+    "Target customer types from product: " + (Array.isArray(profile.target_customer_types) && profile.target_customer_types.length ? profile.target_customer_types.join(", ") : "Not specified"),
     "",
-    "BUSINESS SUMMARY",
+    "PROSPECT TYPE",
+    profile.prospect_type || "Not classified",
+    "PRODUCT-FIT SCORE (research estimate)",
+    String(Number(profile.fit_score || 0)) + "/100",
+    profile.fit_rationale || "No concise fit rationale was returned.",
+    "",
+    "PROSPECT SUMMARY",
     profile.business_summary || "Not enough evidence on the supplied pages.",
     "",
-    "SERVICES",
+    "WORK / SERVICES",
     ...(profile.services.length ? profile.services.map(item => "• " + item) : ["Not clearly stated."]),
     "",
     "CUSTOMER TYPES",
     ...(profile.customer_types.length ? profile.customer_types.map(item => "• " + item) : ["Not clearly stated."]),
     "",
-    "POTENTIAL PRODUCT-FIT SIGNALS (HYPOTHESES)",
+    "PRODUCT-FIT EVIDENCE (HYPOTHESES, NOT BUYING INTENT)",
     ...(profile.fit_signals.length ? profile.fit_signals.map(item => "• " + item.evidence + "\n  Source: " + item.sourceUrl) : ["No clear fit evidence found."]),
     "",
     "PUBLIC ROLE-BASED CONTACT CHANNELS",
@@ -1756,7 +1764,7 @@ function renderSalesResearchReport(row, profile, emails, sources) {
     ...(profile.missing_information.length ? profile.missing_information.map(item => "• " + item) : ["No additional gaps identified."]),
     "",
     "Confidence: " + profile.confidence,
-    "No contact was added to an email campaign. No email was sent."
+    "A fit score is not proof of interest. No contact was added to an email campaign. No email was sent."
   ];
   return lines.join("\n").slice(0, 3800);
 }
@@ -1764,7 +1772,9 @@ function renderSalesResearchReport(row, profile, emails, sources) {
 async function processSalesResearchQueue(env) {
   if (!env.DB || !env.AI || !env.TELEGRAM_BOT_TOKEN) return;
   const row = await env.DB.prepare(
-    "SELECT id, chat_id, company_name, website_url FROM sales_research WHERE status='pending' ORDER BY id LIMIT 1"
+    "SELECT r.id, r.chat_id, r.prospect_name, r.website_url, r.product_document_id, a.product_profile_json " +
+    "FROM sales_research r JOIN sales_document_analysis a ON a.document_id=r.product_document_id " +
+    "WHERE r.status='pending' ORDER BY r.id LIMIT 1"
   ).first();
   if (!row) return;
 
@@ -1775,13 +1785,20 @@ async function processSalesResearchQueue(env) {
   if (!claim.meta?.changes) return;
 
   try {
-    const checked = validateResearchRequest(row.company_name, row.website_url);
+    const checked = validateResearchRequest(row.prospect_name, row.website_url);
     if (!checked.ok) throw new Error(checked.error);
+    let productProfile;
+    try { productProfile = JSON.parse(row.product_profile_json || "{}"); }
+    catch { throw new Error("The linked product profile is unreadable. Re-analyze that product file before researching prospects."); }
+    if (!productProfile || typeof productProfile !== "object" || Array.isArray(productProfile) || !productProfile.product_name) {
+      throw new Error("The linked product file has no valid analyzed product profile.");
+    }
+
     const base = new URL(checked.websiteUrl);
     const pages = [];
     const homepageHtml = await fetchResearchHtml(checked.websiteUrl, base.origin);
     const homepage = extractResearchPage(homepageHtml, checked.websiteUrl, base.hostname);
-    if (!homepage.text) throw new Error("The official homepage did not contain readable page text.");
+    if (!homepage.text) throw new Error("The supplied professional or organization website did not contain readable page text.");
     pages.push(homepage);
 
     const moreUrls = discoverResearchPages(homepage.links, checked.websiteUrl, MAX_RESEARCH_PAGES - 1);
@@ -1796,17 +1813,20 @@ async function processSalesResearchQueue(env) {
     }
 
     const result = await env.AI.run(CLOUD_AI_MODEL, {
-      messages: buildSalesResearchMessages(checked.company, checked.websiteUrl, pages),
+      messages: buildSalesResearchMessages(checked.prospectName, checked.websiteUrl, productProfile, pages),
       response_format: {
         type: "json_schema",
         json_schema: {
-          name: "jarvis_company_research",
+          name: "jarvis_product_market_prospect_research",
           strict: true,
           schema: {
             type: "object",
             properties: {
+              prospect_type: { type: "string", enum: ["individual_professional", "team", "business", "nonprofit", "other"] },
+              fit_score: { type: "integer", minimum: 0, maximum: 100 },
+              fit_rationale: { type: "string" },
               business_summary: { type: "string" },
-              services: { type: "array", items: { type: "string" } },
+              work_or_services: { type: "array", items: { type: "string" } },
               customer_types: { type: "array", items: { type: "string" } },
               fit_signals: {
                 type: "array",
@@ -1823,12 +1843,12 @@ async function processSalesResearchQueue(env) {
               missing_information: { type: "array", items: { type: "string" } },
               confidence: { type: "string", enum: ["low", "medium", "high"] }
             },
-            required: ["business_summary", "services", "customer_types", "fit_signals", "missing_information", "confidence"],
+            required: ["prospect_type", "fit_score", "fit_rationale", "business_summary", "work_or_services", "customer_types", "fit_signals", "missing_information", "confidence"],
             additionalProperties: false
           }
         }
       },
-      max_completion_tokens: 1200,
+      max_completion_tokens: 1400,
       reasoning_effort: "low",
       chat_template_kwargs: { enable_thinking: false },
       temperature: 0.1
@@ -1836,6 +1856,9 @@ async function processSalesResearchQueue(env) {
     const parsed = parseSalesResearchResult(extractAIText(result));
     if (!parsed.ok) throw new Error(parsed.error);
 
+    parsed.profile.product_name = String(productProfile.product_name || "Digital product").slice(0, 160);
+    parsed.profile.target_customer_types = Array.isArray(productProfile.target_customer_types)
+      ? productProfile.target_customer_types.slice(0, 8).map(item => String(item).slice(0, 220)) : [];
     const allowedSources = new Set(pages.map(page => page.sourceUrl));
     parsed.profile.fit_signals = parsed.profile.fit_signals.filter(signal => allowedSources.has(signal.sourceUrl));
     const emails = [...new Map(pages.flatMap(page => page.emails).map(item => [item.email, item])).values()].slice(0, 12);
@@ -1853,8 +1876,8 @@ async function processSalesResearchQueue(env) {
       "UPDATE sales_research SET status='failed', last_error=?, updated_at=? WHERE id=? AND status='researching'"
     ).bind(reason, new Date().toISOString(), row.id).run();
     await sendText(env, row.chat_id,
-      "⚠️ Company research #" + row.id + " could not be completed.\nReason: " + reason +
-      "\nNo email was sent. You can submit the official website again after checking the URL.");
+      "⚠️ Prospect research #" + row.id + " could not be completed.\nReason: " + reason +
+      "\nNo email was sent. Check the selected product file and supplied public website, then submit again.");
   }
 }
 
@@ -1879,7 +1902,7 @@ async function handleSalesCommand(env, chatId, raw) {
       "/sales script show ID — view the saved sales script",
       "/sales prospect RESEARCH_ID | email | contact — add a researched public inbox to an active campaign",
       "",
-      "Uploaded documents are queued by the minute Cron Trigger. Company research is available with /sales research; generate a product sales script with /sales script ID.",
+      "Uploaded documents are queued by the minute Cron Trigger. After analysis, compare individuals or organizations with a product using /sales research PRODUCT_FILE_ID | Prospect Name | Website. Generate a product sales script with /sales script ID.",
       "Sales Intelligence never sends an email during product analysis."
     ].join("\n"));
     return;
@@ -1902,7 +1925,7 @@ async function handleSalesCommand(env, chatId, raw) {
     }
     const researchId = Number(fields[0]);
     const research = await env.DB.prepare(
-      "SELECT id,company_name,website_url,profile_json,public_emails_json,status FROM sales_research WHERE id=? AND chat_id=?"
+      "SELECT id,prospect_name,website_url,product_document_id,profile_json,public_emails_json,status FROM sales_research WHERE id=? AND chat_id=?"
     ).bind(researchId,chatId).first();
     if (!research || research.status !== "completed") {
       await sendText(env, chatId, "Completed company research #" + researchId + " was not found. No prospect was added.");
@@ -1926,17 +1949,17 @@ async function handleSalesCommand(env, chatId, raw) {
       .map(item => item.evidence + " (source: " + item.sourceUrl + ")").slice(0,4).join("\n");
     const context = [
       "Official website research: " + research.website_url,
-      "Business summary: " + String(profile.business_summary || "").slice(0,700),
-      "Potential-fit hypotheses (not verified needs): " + (signals || "No clear fit signal recorded."),
+      "Prospect summary: " + String(profile.business_summary || "").slice(0,700),
+      "Product-fit hypotheses (not verified needs): " + (signals || "No clear fit signal recorded."),
       "Public contact source: " + publicContact.sourceUrl,
       "Contact status: publicly listed only; explicit marketing opt-in has NOT been confirmed."
     ].join("\n").slice(0,2000);
     const now = new Date().toISOString();
     const saved = await env.DB.prepare(
       "INSERT INTO outreach_prospects (campaign_id,chat_id,email,contact_name,company,relevance_context,contact_source_url,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'new',?,?)"
-    ).bind(campaign.id,chatId,email,fields[2] || "Business contact",research.company_name,context,publicContact.sourceUrl,now,now).run();
+    ).bind(campaign.id,chatId,email,fields[2] || "Professional contact",research.prospect_name,context,publicContact.sourceUrl,now,now).run();
     await sendText(env, chatId,
-      "✅ Added researched contact as prospect #" + saved.meta?.last_row_id + ".\nCompany: " + research.company_name +
+      "✅ Added researched contact as prospect #" + saved.meta?.last_row_id + ".\nCompany: " + research.prospect_name +
       "\nEmail: " + email + "\nSource: " + publicContact.sourceUrl +
       "\nPermission: UNVERIFIED — a public address is not consent. Do not send unless the recipient separately opts in. No email was sent.");
     return;
@@ -2034,33 +2057,33 @@ async function handleSalesCommand(env, chatId, raw) {
     const lowerArgument = argument.toLowerCase();
     if (!argument) {
       await sendText(env, chatId,
-        "Use /sales research Company Name | https://official-company-website.com\n" +
-        "JARVIS checks the official homepage and up to two same-site Contact/About/Services pages.\n" +
-        "It only lists generic role inboxes (such as info@ or sales@), not personal email addresses.\n" +
-        "A public contact address is not permission to send marketing email.");
+        "Use /sales research PRODUCT_FILE_ID | Prospect Name | https://professional-or-organization-site.com\n" +
+        "The product file must already be analyzed. JARVIS compares the prospect's public website against that product's target customer types and use case.\n" +
+        "Prospects can be individuals, teams, businesses, nonprofits, or other groups.\n" +
+        "Research checks up to three pages on the supplied site and only lists generic role-based inboxes. A public contact address is not marketing permission.");
       return;
     }
     if (lowerArgument === "list" || lowerArgument === "status") {
       const rows = await env.DB.prepare(
-        "SELECT id, company_name, status, created_at, last_error FROM sales_research WHERE chat_id=? ORDER BY id DESC LIMIT 10"
+        "SELECT id, product_document_id, prospect_name, status, created_at, last_error FROM sales_research WHERE chat_id=? ORDER BY id DESC LIMIT 10"
       ).bind(chatId).all();
       const items = rows.results || [];
       await sendText(env, chatId, items.length
-        ? "🔎 COMPANY RESEARCH QUEUE\n\n" + items.map(item =>
-          "#" + item.id + " · " + item.company_name + "\nStatus: " + item.status +
-          (item.last_error ? "\nIssue: " + item.last_error : "")).join("\n\n")
-        : "No company research requests yet. Use /sales research Company | https://official-site.example");
+        ? "🔎 PRODUCT-MARKET PROSPECT RESEARCH\n\n" + items.map(item =>
+          "#" + item.id + " · " + item.prospect_name + "\nProduct file: #" + item.product_document_id +
+          "\nStatus: " + item.status + (item.last_error ? "\nIssue: " + item.last_error : "")).join("\n\n")
+        : "No prospect research requests yet. Use /sales research PRODUCT_FILE_ID | Prospect Name | https://official-site.example");
       return;
     }
     const reportMatch = /^(\d+)$/i.exec(argument);
     if (reportMatch) {
       const id = Number(reportMatch[1]);
       const item = await env.DB.prepare(
-        "SELECT id, company_name, website_url, status, profile_json, public_emails_json, source_urls_json, last_error FROM sales_research WHERE id=? AND chat_id=?"
+        "SELECT id, product_document_id, prospect_name, website_url, status, profile_json, public_emails_json, source_urls_json, last_error FROM sales_research WHERE id=? AND chat_id=?"
       ).bind(id, chatId).first();
-      if (!item) { await sendText(env, chatId, "I couldn't find company research #" + id + "."); return; }
+      if (!item) { await sendText(env, chatId, "I couldn't find prospect research #" + id + "."); return; }
       if (item.status !== "completed") {
-        await sendText(env, chatId, "Company research #" + id + " is " + item.status + "." + (item.last_error ? "\nIssue: " + item.last_error : ""));
+        await sendText(env, chatId, "Prospect research #" + id + " is " + item.status + "." + (item.last_error ? "\nIssue: " + item.last_error : ""));
         return;
       }
       const profile = JSON.parse(item.profile_json || "{}");
@@ -2070,26 +2093,37 @@ async function handleSalesCommand(env, chatId, raw) {
       return;
     }
     const fields = argument.split("|").map(value => value.trim());
-    if (fields.length !== 2) {
-      await sendText(env, chatId, "Use /sales research Company Name | https://official-company-website.com");
+    if (fields.length !== 3 || !/^\d+$/.test(fields[0])) {
+      await sendText(env, chatId, "Use /sales research PRODUCT_FILE_ID | Prospect Name | https://professional-or-organization-site.com");
       return;
     }
-    const checked = validateResearchRequest(fields[0], fields[1]);
-    if (!checked.ok) { await sendText(env, chatId, "I couldn't queue that research request. " + checked.error); return; }
+    const productId = Number(fields[0]);
+    const product = await env.DB.prepare(
+      "SELECT d.id,d.status,d.file_name,a.product_profile_json FROM sales_documents d " +
+      "JOIN sales_document_analysis a ON a.document_id=d.id WHERE d.id=? AND d.chat_id=?"
+    ).bind(productId, chatId).first();
+    if (!product || product.status !== "analyzed" || !product.product_profile_json) {
+      await sendText(env, chatId, "Sales file #" + productId + " must have a completed product analysis before prospect research. Use /sales product " + productId + " to check it. No research was queued.");
+      return;
+    }
+    const checked = validateResearchRequest(fields[1], fields[2]);
+    if (!checked.ok) { await sendText(env, chatId, "I couldn't queue that prospect research. " + checked.error); return; }
     const active = await env.DB.prepare(
       "SELECT COUNT(*) AS total FROM sales_research WHERE chat_id=? AND status IN ('pending','researching')"
     ).bind(chatId).first();
     if (Number(active?.total || 0) >= 3) {
-      await sendText(env, chatId, "You already have three company research requests queued. Check /sales research status first.");
+      await sendText(env, chatId, "You already have three prospect research requests queued. Check /sales research status first.");
       return;
     }
     const now = new Date().toISOString();
     const saved = await env.DB.prepare(
-      "INSERT INTO sales_research (chat_id, company_name, website_url, status, created_at, updated_at) VALUES (?, ?, ?, 'pending', ?, ?)"
-    ).bind(chatId, checked.company, checked.websiteUrl, now, now).run();
+      "INSERT INTO sales_research (chat_id, product_document_id, prospect_name, website_url, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)"
+    ).bind(chatId, productId, checked.prospectName, checked.websiteUrl, now, now).run();
+    const productProfile = JSON.parse(product.product_profile_json || "{}");
     await sendText(env, chatId,
-      "🔎 Company research #" + saved.meta?.last_row_id + " queued for " + checked.company +
-      ". JARVIS will inspect up to three pages on the supplied official website. This is research only; no prospect will be added and no email will be sent.");
+      "🔎 Prospect research #" + saved.meta?.last_row_id + " queued.\nProspect: " + checked.prospectName +
+      "\nProduct: " + String(productProfile.product_name || product.file_name) +
+      "\nJARVIS will compare the supplied public website with that product's target market. This is research only; no prospect will be added and no email will be sent.");
     return;
   }
 
@@ -2122,7 +2156,7 @@ async function handleSalesCommand(env, chatId, raw) {
       "\nAnalyzing: " + (counts.get("analyzing") || 0) +
       "\nAnalyzed: " + (counts.get("analyzed") || 0) +
       "\nFailed: " + (counts.get("failed") || 0) +
-      "\nBusiness research: use /sales research Company | https://official-site.example\nEmail sending remains permission-gated in /outreach.");
+      "\nProduct-market prospect research: use /sales research PRODUCT_FILE_ID | Prospect Name | https://official-site.example\nEmail sending remains permission-gated in /outreach.");
     return;
   }
 
