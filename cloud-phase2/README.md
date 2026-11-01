@@ -77,6 +77,33 @@ https://developers.google.com/apps-script/guides/web
 
 The connector can list the next 7 days, create events, and search event titles across the past year and next year. Deletion is a two-step process: `/deleteevent title` finds matches and issues a 10-minute code; `/confirmdelete CODE` deletes only the matching event after the connector verifies its title and start time have not changed; `/canceldelete CODE` cancels it. Use explicit commands rather than natural-language deletion requests to avoid accidental calendar changes.
 
+## Sales Intelligence — Phase 1 document intake
+
+Sales Intelligence is being added to the existing JARVIS Telegram bot. This first phase only receives and registers product documents; it does not yet extract document text, analyze products, research companies, build scripts, or send Sales Intelligence emails.
+
+Available commands:
+- `/sales` — show the current Sales Intelligence capabilities.
+- `/sales files` — list the latest received product documents.
+- `/sales file ID` — inspect one document's metadata.
+- `/sales status` — show document-intake status.
+
+Send a product document in the existing Telegram chat using the attachment button's **File** option (not Photo). Accepted filename extensions are PDF, DOCX, PPTX, TXT, MD, and CSV. Telegram's current bot download ceiling is 20 MB; the intake rejects declared files over that limit. The webhook validates the extension, MIME type, identifiers, and size metadata, and deduplicates repeated uploads.
+
+For this initial phase, D1 stores only the private Telegram `file_id`, unique file ID, file name, MIME type, size, optional caption, and status. It does not download or copy file bytes into Cloudflare, and never prints the Telegram file ID into chat. Telegram documents that file IDs can be treated as persistent and that a fresh download URL can be requested later using `getFile`. The next phase will add controlled file retrieval and text extraction. No R2 bucket or new Cloudflare binding is required for this metadata-only intake phase.
+
+### One-time D1 migration before deploying Phase 1
+
+The existing production database needs the additive migration `cloud-phase2/migrations/20261101_sales_documents.sql` before the new Worker code is deployed:
+
+1. Open Cloudflare Dashboard → Workers & Pages → D1 → the existing `jarvis-reminders` database → Console.
+2. Paste the complete contents of `cloud-phase2/migrations/20261101_sales_documents.sql`.
+3. Execute it once. It uses `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`; it does not alter or delete existing JARVIS tables or rows.
+4. Only after the migration succeeds, use the guarded GitHub Actions deployment workflow to publish the Worker update.
+
+The GitHub deployment workflow validates the migration locally but deliberately does not run remote D1 schema changes. Do not deploy the new Worker code before the migration is applied. After deployment, test `/sales`, upload a small supported document, then test `/sales files` and `/sales file ID`.
+
+**Current limitation:** a successful upload means that the file reference and metadata were saved. It does not mean the file contents have been read or analyzed. Product extraction and analysis are separate later phases. This phase does not change Gmail sending, reply monitoring, existing outreach campaigns, reminders, Calendar, or the Telegram webhook.
+
 ## Gmail outreach (approval-first, low volume)
 
 The separate Apps Script connector in `gmail-outreach-apps-script.js` uses Gmail Advanced Service with the narrow `gmail.send` and `gmail.metadata` scopes. It sends only after `/outreach send ID`, checks reply headers only, and never forwards email bodies to Telegram. Configure Script Property `JARVIS_GMAIL_SHARED_SECRET`; set Cloudflare Worker variable `GMAIL_WEBAPP_URL` and secret `GMAIL_SHARED_SECRET`. Deploy this separate Apps Script Web App before using `/outreach start`.
