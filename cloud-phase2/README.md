@@ -113,6 +113,7 @@ Use the existing Telegram chat:
 - `/sales research ID` — view the completed report.
 - `/sales script PRODUCT_FILE_ID` — generate or refresh a product sales script.
 - `/sales script show PRODUCT_FILE_ID` — view the saved script.
+- `/sales prospect RESEARCH_ID | email | contact name` — add one role inbox from a research report to the active outreach campaign (unverified by default).
 
 The script generator creates a beginner-friendly opening, 30-second pitch, discovery questions, value points, objection responses, a low-pressure next step, and claims to avoid. It uses only the analyzed product profile and never invents prices or customer results.
 
