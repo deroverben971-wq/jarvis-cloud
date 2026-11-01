@@ -2,6 +2,7 @@ import { isReminderRequest, manilaInputToUtc, parseReminderRequest } from "./rem
 import { validateSalesDocument } from "./sales-documents.mjs";
 import { buildProductAnalysisMessages, getSalesExtractionMode, MAX_PLAIN_TEXT_BYTES, normalizeExtractedText, parseProductProfile } from "./sales-analysis.mjs";
 import { buildSalesResearchMessages, discoverResearchPages, extractResearchPage, MAX_RESEARCH_PAGE_BYTES, MAX_RESEARCH_PAGES, parseSalesResearchResult, validateResearchRequest } from "./sales-research.mjs";
+import { buildSalesScriptMessages, parseSalesScriptResult, renderSalesScript } from "./sales-scripts.mjs";
 
 const HELP = [
   "🤖 JARVIS CLOUD — PHASE 2",
@@ -1828,13 +1829,102 @@ async function handleSalesCommand(env, chatId, raw) {
       "/sales product ID — view a saved product profile",
       "/sales analyze ID — queue or retry a failed analysis",
       "/sales status — show analysis totals",
+      "/sales script ID — generate or refresh a sales script from an analyzed product",
+      "/sales script show ID — view the saved sales script",
       "",
-      "Uploaded documents are queued for analysis by the existing minute Cron Trigger. Business research, script creation, and campaign automation are later phases.",
+      "Uploaded documents are queued by the minute Cron Trigger. Company research is available with /sales research; generate a product sales script with /sales script ID.",
       "Sales Intelligence never sends an email during product analysis."
     ].join("\n"));
     return;
   }
 
+
+
+  const scriptMatch = /^script(?:\s+(show\s+)?(\d+))?$/i.exec(rest);
+  if (scriptMatch) {
+    const idText = scriptMatch[2] || "";
+    if (!idText) {
+      await sendText(env, chatId,
+        "Use /sales script ID to generate or refresh a sales script from an analyzed product, or /sales script show ID to view the saved script.");
+      return;
+    }
+    const productId = Number(idText);
+    if (scriptMatch[1]) {
+      const saved = await env.DB.prepare(
+        "SELECT s.script_json,d.file_name,a.product_profile_json FROM sales_scripts s " +
+        "JOIN sales_documents d ON d.id=s.product_document_id " +
+        "JOIN sales_document_analysis a ON a.document_id=d.id WHERE s.product_document_id=? AND s.chat_id=?"
+      ).bind(productId,chatId).first();
+      if (!saved) { await sendText(env, chatId, "No saved sales script for product file #" + productId + ". Generate one with /sales script " + productId + "."); return; }
+      const product = JSON.parse(saved.product_profile_json || "{}");
+      const parsed = parseSalesScriptResult(saved.script_json || "");
+      if (!parsed.ok) { await sendText(env, chatId, "The saved script could not be read. Regenerate it with /sales script " + productId + "."); return; }
+      await sendText(env, chatId, renderSalesScript(product.product_name || saved.file_name, parsed.script));
+      return;
+    }
+    const row = await env.DB.prepare(
+      "SELECT d.id,d.chat_id,d.file_name,d.status,a.product_profile_json FROM sales_documents d " +
+      "JOIN sales_document_analysis a ON a.document_id=d.id WHERE d.id=? AND d.chat_id=?"
+    ).bind(productId,chatId).first();
+    if (!row) { await sendText(env, chatId, "I couldn't find analyzed product file #" + productId + "."); return; }
+    if (row.status !== "analyzed" || !row.product_profile_json) {
+      await sendText(env, chatId, "Product file #" + productId + " is not analyzed yet. Finish with /sales product " + productId + " first.");
+      return;
+    }
+    if (!env.AI) { await sendText(env, chatId, "Cloud AI is unavailable, so I couldn't create the sales script."); return; }
+    let profile;
+    try { profile = JSON.parse(row.product_profile_json); }
+    catch { await sendText(env, chatId, "The saved product profile could not be read. No script was created."); return; }
+    try {
+      const output = await env.AI.run(CLOUD_AI_MODEL, {
+        messages: buildSalesScriptMessages(profile),
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "jarvis_sales_script",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                opening: { type: "string" },
+                elevator_pitch: { type: "string" },
+                discovery_questions: { type: "array", items: { type: "string" } },
+                value_points: { type: "array", items: { type: "string" } },
+                objection_responses: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: { objection: { type: "string" }, response: { type: "string" } },
+                    required: ["objection","response"],
+                    additionalProperties: false
+                  }
+                },
+                next_step: { type: "string" },
+                claims_to_avoid: { type: "array", items: { type: "string" } }
+              },
+              required: ["opening","elevator_pitch","discovery_questions","value_points","objection_responses","next_step","claims_to_avoid"],
+              additionalProperties: false
+            }
+          }
+        },
+        max_completion_tokens: 1400,
+        reasoning_effort: "low",
+        chat_template_kwargs: { enable_thinking: false },
+        temperature: 0.1
+      });
+      const parsed = parseSalesScriptResult(extractAIText(output));
+      if (!parsed.ok) throw new Error(parsed.error);
+      const now = new Date().toISOString();
+      await env.DB.prepare(
+        "INSERT INTO sales_scripts (product_document_id,chat_id,script_json,created_at,updated_at) VALUES (?,?,?,?,?) " +
+        "ON CONFLICT(product_document_id) DO UPDATE SET chat_id=excluded.chat_id,script_json=excluded.script_json,updated_at=excluded.updated_at"
+      ).bind(productId,chatId,JSON.stringify(parsed.script),now,now).run();
+      await sendText(env, chatId, renderSalesScript(profile.product_name || row.file_name, parsed.script));
+    } catch (error) {
+      await sendText(env, chatId, "I couldn't create the sales script. Nothing was sent. Reason: " + String(error?.message || "unknown error").slice(0,180));
+    }
+    return;
+  }
 
   const researchMatch = /^research(?:\s+([\s\S]+))?$/i.exec(rest);
   if (researchMatch) {
