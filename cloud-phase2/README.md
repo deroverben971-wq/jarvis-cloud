@@ -164,6 +164,16 @@ In Cloudflare Dashboard → Workers & Pages → D1 → existing `jarvis-reminder
 
 The GitHub workflows validate the SQL locally but do not run remote D1 migrations. Do not deploy the new Worker code until both D1 migrations have succeeded. After deployment, test `/sales`, upload a small PDF or TXT file, check `/sales files`, and then use `/sales product ID` after the analysis notification arrives.
 
+## Sales Intelligence — zero-cost product-led USA market planning
+
+The new /sales market PRODUCT_FILE_ID command uses the product profile already analyzed and stored in D1 to infer a likely ideal customer profile, up to four target-market segments, relevant buyer roles, and two Google Search links per segment. It is product-driven: the user does not have to manually choose an industry. The plan always focuses on the United States.
+
+This mode reuses the existing Cloudflare Workers AI binding. It adds no API key, paid search service, D1 table, or migration. It does not automatically retrieve or scrape Google search results. The user opens the search links, checks the official organization website, then queues a fit assessment with /sales research PRODUCT_FILE_ID | Organization name | https://official-site.example. The existing research queue reads up to three same-origin public pages and produces a product-fit report.
+
+The generated market plan is a hypothesis based on the uploaded product document, not a verified prospect list or evidence of buying interest. Search results and websites must be checked manually. Do not use public business contact details as proof of permission to send marketing email. Existing recipient opt-in and parent/guardian review gates remain mandatory. This command never adds prospects to campaigns and never sends email.
+
+A general-purpose web search API with a free, permitted server-side tier is not available for this deployment as currently configured. Do not replace this mode with scraping search-result pages or overloading public community data services. A future fully automatic discovery phase needs a documented and permitted source with a genuinely free quota; until then, this feature only generates targeted searches.
+
 ## Gmail outreach (approval-first, low volume)
 
 The separate Apps Script connector in `gmail-outreach-apps-script.js` uses Gmail Advanced Service with the narrow `gmail.send` and `gmail.metadata` scopes. It sends only after `/outreach send ID`, checks reply headers only, and never forwards email bodies to Telegram. Configure Script Property `JARVIS_GMAIL_SHARED_SECRET`; set Cloudflare Worker variable `GMAIL_WEBAPP_URL` and secret `GMAIL_SHARED_SECRET`. Deploy this separate Apps Script Web App before using `/outreach start`.
