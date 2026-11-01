@@ -2069,7 +2069,8 @@ async function handleSalesCommand(env, chatId, raw) {
       const lines = [
         "🏗️ JARVIS US CONSTRUCTION PROSPECT HUNT",
         "Product: " + String(productProfile.product_name || product.file_name).slice(0, 140),
-        "Source: companies.directory public US company directory",
+        "Source: " + String(directory.sourceLabel || "Public company directory"),
+        "Coverage: " + String(directory.scopeLabel || "Coverage not specified"),
         "New official websites queued: " + queued.length,
         "",
         "QUEUED FOR PRODUCT-FIT + OFFICIAL-SITE CONTACT RESEARCH"
@@ -2079,7 +2080,10 @@ async function handleSalesCommand(env, chatId, raw) {
           "",
           "#" + item.id + " · " + item.name,
           "Location: " + (item.location || "Not supplied"),
-          "Website: " + item.websiteUrl
+          "Website: " + item.websiteUrl,
+          ...(item.profileUrl ? ["Directory profile: " + item.profileUrl] : []),
+          ...(Array.isArray(item.trades) && item.trades.length ? ["Trades: " + item.trades.join(", ")] : []),
+          ...(item.verificationTier ? ["Directory verification tier: " + item.verificationTier] : [])
         );
       }
       lines.push(
@@ -2089,7 +2093,9 @@ async function handleSalesCommand(env, chatId, raw) {
         "",
         "Check progress: /sales research list",
         "No campaign prospects were added. No email was sent.",
-        "Directory data can be incomplete or outdated; verify each organization and website."
+        "Directory data can be incomplete or outdated; verify each organization and website.",
+        ...(directory.attribution ? [directory.attribution + (directory.snapshotVersion ? " · Snapshot " + directory.snapshotVersion : "")] : []),
+        ...(directory.fallbackReason ? ["Nationwide source issue: " + directory.fallbackReason, "The fallback only covers Ohio home-services contractors; it is not a nationwide list."] : [])
       );
       if (skipped.length) lines.push("Already researched and skipped: " + skipped.slice(0, 5).join(", "));
       await sendText(env, chatId, lines.join("\n"));
