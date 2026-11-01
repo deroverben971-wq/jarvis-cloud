@@ -50,7 +50,8 @@ export function buildSalesMarketMessages(productProfile) {
         "The intended market is the United States. Focus on organizations, businesses, institutions, or customer groups that could realistically use or purchase the product.",
         "For each segment, provide two practical Google search queries that a human can open and review. Include USA or a relevant US state/city phrase in each query.",
         "Also map the product's target market to up to three relevant 2-digit NAICS industry prefixes for US federal-award data. Only select from this exact list: 11, 21, 22, 23, 31, 32, 33, 42, 44, 45, 48, 49, 51, 52, 53, 54, 55, 56, 61, 62, 71, 72, 81, 92. Leave the list empty when no sector is defensible.",
-        "Search queries must discover organizations or businesses, not personal email addresses, private data, or individual people's contact details.",
+        "Search queries must discover organizations or businesses through official company websites, public trade associations, or business directories, not individual people or private data.",
+        "Do not use LinkedIn people-search queries, personal names, email-harvesting queries, phone-number searches, or private-data searches.",
         "Do not claim that any prospect has been found, verified, or has buying intent. Do not claim that any search was performed.",
         "Return only JSON matching the requested schema."
       ].join(" ")
