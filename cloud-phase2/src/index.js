@@ -3,7 +3,7 @@ import { validateSalesDocument } from "./sales-documents.mjs";
 import { buildProductAnalysisMessages, getSalesExtractionMode, MAX_PLAIN_TEXT_BYTES, normalizeExtractedText, parseProductProfile } from "./sales-analysis.mjs";
 import { buildSalesResearchMessages, discoverResearchPages, extractResearchPage, MAX_RESEARCH_PAGE_BYTES, MAX_RESEARCH_PAGES, parseSalesResearchResult, validateResearchRequest } from "./sales-research.mjs";
 import { buildSalesScriptMessages, parseSalesScriptResult, renderSalesScript } from "./sales-scripts.mjs";
-import { buildSalesMarketMessages, parseSalesMarketResult, renderSalesMarketPlan } from "./sales-market.mjs";
+import { buildSalesMarketMessages, parseSalesMarketResult, renderSalesMarketPlan, inferNAICSSectorsFromProduct } from "./sales-market.mjs";
 import { searchFederalAwardRecipients, renderFederalAwardCandidates } from "./sales-discovery.mjs";
 
 const HELP = [
@@ -1941,6 +1941,9 @@ async function generateProductMarketPlan(env, productProfile) {
   });
   const parsed = parseSalesMarketResult(extractAIText(output));
   if (!parsed.ok) throw new Error(parsed.error);
+  if (!parsed.plan.naics_sectors.length) {
+    parsed.plan.naics_sectors = inferNAICSSectorsFromProduct(productProfile, parsed.plan);
+  }
   return parsed.plan;
 }
 
