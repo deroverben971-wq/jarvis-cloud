@@ -10,10 +10,9 @@ on:
       - 'cloud-phase2/src/index.js'
       - 'cloud-phase2/src/sales-documents.mjs'
       - 'cloud-phase2/src/sales-analysis.mjs'
-      - 'cloud-phase2/migrations/20261102_sales_document_analysis.sql'
-      - 'cloud-phase2/schema.sql'
       - 'cloud-phase2/schema.sql'
       - 'cloud-phase2/migrations/20261101_sales_documents.sql'
+      - 'cloud-phase2/migrations/20261102_sales_document_analysis.sql'
       - 'cloud-phase2/wrangler.jsonc'
       - '.github/workflows/preflight-cloudflare-bootstrap.yml'
 
