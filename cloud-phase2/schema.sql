@@ -220,3 +220,35 @@ CREATE TABLE IF NOT EXISTS sales_document_analysis (
 
 CREATE INDEX IF NOT EXISTS idx_sales_document_analysis_attempts
   ON sales_document_analysis (attempts, document_id);
+
+
+CREATE TABLE IF NOT EXISTS sales_research (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id TEXT NOT NULL,
+  product_document_id INTEGER NOT NULL,
+  prospect_name TEXT NOT NULL,
+  website_url TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','researching','completed','failed')),
+  profile_json TEXT,
+  public_emails_json TEXT NOT NULL DEFAULT '[]',
+  source_urls_json TEXT NOT NULL DEFAULT '[]',
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (product_document_id) REFERENCES sales_documents(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_sales_research_chat_created
+  ON sales_research (chat_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_sales_research_status
+  ON sales_research (status, id);
+
+
+CREATE TABLE IF NOT EXISTS sales_scripts (
+  product_document_id INTEGER PRIMARY KEY,
+  chat_id TEXT NOT NULL,
+  script_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (product_document_id) REFERENCES sales_documents(id) ON DELETE CASCADE
+);

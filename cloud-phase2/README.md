@@ -104,6 +104,37 @@ The GitHub deployment workflow validates the migration locally but deliberately 
 
 **Current limitation:** a successful upload means that the file reference and metadata were saved. It does not mean the file contents have been read or analyzed. Product extraction and analysis are separate later phases. This phase does not change Gmail sending, reply monitoring, existing outreach campaigns, reminders, Calendar, or the Telegram webhook.
 
+## Sales Intelligence — Phase 3 product-market research and permission-first email automation
+
+Use the existing Telegram chat:
+
+- `/sales research PRODUCT_FILE_ID | Prospect Name | https://professional-or-organization-site.example` — queue research for an individual professional, team, business, nonprofit, or other prospect against one already-analyzed product.
+- `/sales research list` — list recent product-linked prospect research.
+- `/sales research ID` — view a completed research report.
+- `/sales script PRODUCT_FILE_ID` — generate or refresh a product sales script.
+- `/sales script show PRODUCT_FILE_ID` — view the saved script.
+- `/sales prospect RESEARCH_ID | email | contact name` — add one public role inbox from a research report to the active outreach campaign (unverified by default).
+
+**Product first, market second, prospect third.** The selected analyzed product profile determines its target customer types, problem, and use case. Each prospect is assessed against that product; the report classifies the prospect as an individual professional, team, business, nonprofit, or other and provides an evidence-based fit estimate. Uploading another product changes the target-market criteria. A fit score is a research estimate, not proof of interest.
+
+The script generator creates a beginner-friendly opening, 30-second pitch, discovery questions, value points, objection responses, a low-pressure next step, and claims to avoid. It uses only the analyzed product profile and never invents prices or customer results.
+
+The researcher checks the supplied public HTTPS homepage and up to two same-origin Contact/About/Services/Portfolio/Profile pages. It does not run a general search engine or crawl the wider web: a prospect name and public website must be supplied. It extracts only generic role-based addresses listed on those pages; it does not collect named personal email addresses. This is a limitation for individual professionals who do not publish a role-based contact address. Every report includes the pages used as sources and distinguishes possible product fit from verified facts.
+
+A publicly listed email address is a contact channel, **not permission to send marketing**. Publicly found addresses are stored as `public_contact_only` and cannot be sent to unless the recipient separately opts in and that evidence is recorded.
+
+### Permission, parent/guardian review, and sending gates
+
+- `/outreach permission ID | evidence` records the actual opt-in source (for example, a dated sign-up or a message where the recipient explicitly asked to receive product updates). Do not use a public website listing as evidence.
+- `/outreach guardian-approve CAMPAIGN_ID | adult name` records campaign-level parent/guardian review.
+- `/outreach guardian-review ID | adult name` records review of the exact recipient and exact email preview.
+- `/outreach send ID` is blocked unless the campaign is active, the prospect has documented opt-in, the campaign has guardian approval, the exact draft has guardian review, and the address is not suppressed.
+- `/outreach auto-on` only enables scheduled sends for eligible, pre-reviewed opt-in drafts. Automatic sending starts OFF.
+- Scheduled follow-ups are limited, checked for replies, and stopped after a reply or opt-out. Use `/outreach auto-off`, `/outreach pause`, `/outreach stop ID`, `/outreach optout EMAIL`, or `/outreach close` to stop automation.
+
+Guardian review commands are user-declared audit records, not identity verification. The parent/guardian must personally review the campaign and exact recipient/message and personally enter the review commands; do not enter their name on their behalf. Recipient opt-in must be genuine and separately evidenced. No broad scraped lists or unsolicited bulk email are supported.
+
+Before deployment, apply the one-time additive migration `cloud-phase2/migrations/20261103_sales_research_permission_gates.sql` to the existing `jarvis-reminders` D1 database. The deploy workflow validates migrations but does not execute remote D1 changes. Do not run the migration twice. Product analysis, prospect research, and sales-script generation do not send email by themselves.
 ## Sales Intelligence — Phase 2 product document analysis
 
 Sales Intelligence is being added to the existing JARVIS Telegram bot. Upload a product document in the existing authorized chat using Telegram's attachment button → **File** (not Photo).

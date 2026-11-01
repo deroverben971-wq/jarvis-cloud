@@ -1,6 +1,8 @@
 import { isReminderRequest, manilaInputToUtc, parseReminderRequest } from "./reminder-parser.mjs";
 import { validateSalesDocument } from "./sales-documents.mjs";
 import { buildProductAnalysisMessages, getSalesExtractionMode, MAX_PLAIN_TEXT_BYTES, normalizeExtractedText, parseProductProfile } from "./sales-analysis.mjs";
+import { buildSalesResearchMessages, discoverResearchPages, extractResearchPage, MAX_RESEARCH_PAGE_BYTES, MAX_RESEARCH_PAGES, parseSalesResearchResult, validateResearchRequest } from "./sales-research.mjs";
+import { buildSalesScriptMessages, parseSalesScriptResult, renderSalesScript } from "./sales-scripts.mjs";
 
 const HELP = [
   "🤖 JARVIS CLOUD — PHASE 2",
@@ -30,6 +32,10 @@ const HELP = [
   "/sales file ID — show one received document",
   "/sales product ID — show the saved product analysis",
   "/sales analyze ID — queue or retry product analysis",
+  "/sales research PRODUCT_FILE_ID | Prospect Name | https://official-site.example — compare a prospect with a product's target market",
+  "/sales research list — list product-linked prospect research",
+  "/sales research ID — view a research report",
+  "/sales prospect RESEARCH_ID | email | contact — add a researched public inbox to a campaign",
   "Upload PDF, DOCX, XLSX, CSV, TXT, or MD as a Telegram document (not as a photo).",
   "",
   "EMAIL OUTREACH",
@@ -38,7 +44,12 @@ const HELP = [
   "/outreach add email | contact | company | why relevant — add one business prospect",
   "/outreach prospects — list prospects",
   "/outreach draft ID — generate and preview an email",
-  "/outreach send ID — send the exact preview you approved",
+  "/outreach send ID — send after documented opt-in and guardian review",
+  "/outreach permission ID | evidence — record explicit recipient opt-in",
+  "/outreach guardian-approve CAMPAIGN_ID | adult name — record campaign review",
+  "/outreach guardian-review ID | adult name — review an exact draft",
+  "/outreach guardian-revoke — revoke campaign approval and block sends",
+  "/outreach auto-on or /outreach auto-off — control pre-reviewed opt-in drafts",
   "/outreach pause or /outreach resume — control follow-ups",
   "/outreach optout EMAIL — suppress an address from future outreach",
   "",
@@ -703,7 +714,7 @@ async function handleOutreachSetupInput(env, message, campaign) {
       "✅ Outreach campaign #" + campaign.id + " is set up.\nPitch: " + String(campaign.product || "").slice(0, 200) +
       "\nTarget: " + String(campaign.target_audience || "").slice(0, 200) +
       "\nSender: " + value +
-      "\n\nAdd one appropriate business contact:\n/outreach add person@business.com | Contact name | Company | Why this business is relevant\n\nUse /outreach draft ID to preview an email. Nothing is sent until you explicitly use /outreach send ID. One follow-up may be sent four days later only if no reply is detected.\n\nPlease have a parent/guardian review the campaign and first email before sending.");
+      "\n\nAdd an appropriate contact:\n/outreach add person@business.com | Contact name | Company | Why this business is relevant\nThen record explicit opt-in evidence with /outreach permission ID | source. A public contact page is not opt-in.\n\nGenerate a preview with /outreach draft ID. A parent/guardian must approve the campaign and review the exact draft before it can be sent. Automatic mode is limited to those individually reviewed, opted-in drafts.");
   } else {
     await sendText(env, chatId, "I couldn't identify the setup step. Use /outreach status or /outreach cancel.");
   }
@@ -712,13 +723,19 @@ async function handleOutreachSetupInput(env, message, campaign) {
 function outreachHelp(campaign) {
   const lines = [
     "📨 JARVIS EMAIL OUTREACH", "",
-    "Low-volume, approval-first outreach. Add appropriate business contacts you are allowed to contact; do not use scraped lists. Initial emails require your explicit send command. At most one follow-up may be sent automatically after 4 days with no detected reply.", "",
+    "Permission-first outreach only. Publicly listed email addresses are not consent. Only documented opt-in contacts can be sent to; a parent/guardian must approve the campaign and review each exact draft. Automatic mode sends only individually reviewed, opted-in drafts. One follow-up may be sent after 4 days if no reply is detected.", "",
     "/outreach start — set up a campaign conversationally",
     "/outreach status — show campaign and counts",
     "/outreach add email | contact | company | why relevant",
     "/outreach prospects — list prospects",
     "/outreach draft ID — generate and preview an email",
-    "/outreach send ID — send that exact preview",
+    "/outreach send ID — send an exact preview after permission and guardian checks",
+    "/outreach permission ID | opt-in evidence — record documented permission",
+    "/outreach guardian-approve CAMPAIGN_ID | adult name — record parent/guardian campaign review",
+    "/outreach guardian-review ID | adult name — record review of the exact draft",
+    "/outreach guardian-revoke — revoke campaign approval and block sends",
+    "/outreach auto-on — send only eligible, guardian-reviewed drafts automatically",
+    "/outreach auto-off — disable automatic initial sends",
     "/outreach stop ID — stop future follow-ups for one prospect",
     "/outreach optout EMAIL — suppress an address from any future outreach",
     "/outreach pause — pause new sends and follow-ups",
@@ -775,10 +792,101 @@ async function handleOutreachCommand(env, chatId, raw) {
     const counts = await env.DB.prepare("SELECT status, COUNT(*) AS n FROM outreach_prospects WHERE campaign_id=? GROUP BY status").bind(campaign.id).all();
     await sendText(env, chatId, "📨 CAMPAIGN #" + campaign.id + "\nStatus: " + campaign.status +
       "\nPitch: " + String(campaign.product || "").slice(0, 200) +
-      "\nSender: " + campaign.sender_email + "\n\nProspects:\n" +
+      "\nSender: " + campaign.sender_email +
+      "\nParent/guardian campaign review: " + (campaign.guardian_approved_at ? "recorded (" + campaign.guardian_approved_by + ")" : "not recorded") +
+      "\nAutomatic sending: " + (campaign.auto_send_enabled ? "ON" : "OFF") +
+      "\n\nProspects:\n" +
       ((counts.results || []).map(r => r.status + ": " + r.n).join("\n") || "No prospects yet."));
     return;
   }
+
+  let approvalMatch = /^permission\s+(\d+)\s*\|\s*([\s\S]+)$/i.exec(rest);
+  if (approvalMatch) {
+    if (!campaign || campaign.status !== "active") { await sendText(env, chatId, "You need an active campaign first."); return; }
+    const id = Number(approvalMatch[1]);
+    const evidence = approvalMatch[2].trim();
+    if (evidence.length < 12 || evidence.length > 500) {
+      await sendText(env, chatId, "Record a real opt-in source (12–500 characters), such as the dated sign-up form or a message where the recipient explicitly requested updates. A public website listing is not opt-in.");
+      return;
+    }
+    const row = await env.DB.prepare("SELECT id,status FROM outreach_prospects WHERE id=? AND campaign_id=? AND chat_id=?")
+      .bind(id,campaign.id,chatId).first();
+    if (!row || !["new","draft_ready"].includes(row.status)) { await sendText(env, chatId, "That is not an editable prospect in this campaign."); return; }
+    await env.DB.prepare("UPDATE outreach_prospects SET contact_permission_status='documented_opt_in', permission_source=?, permission_verified_at=?, guardian_reviewed_at=NULL, guardian_reviewed_by=NULL, updated_at=? WHERE id=? AND chat_id=?")
+      .bind(evidence,new Date().toISOString(),new Date().toISOString(),id,chatId).run();
+    await sendText(env, chatId, "✅ Opt-in evidence recorded for prospect #" + id + ". This is your record of permission; only use it when the recipient genuinely requested or agreed to receive messages. A publicly listed email alone does not qualify. No email was sent.");
+    return;
+  }
+
+  approvalMatch = /^guardian-approve\s+(\d+)\s*\|\s*([\s\S]+)$/i.exec(rest);
+  if (approvalMatch) {
+    if (!campaign || campaign.status !== "active" || Number(approvalMatch[1]) !== Number(campaign.id)) {
+      await sendText(env, chatId, "Use /outreach guardian-approve " + (campaign?.id || "CAMPAIGN_ID") + " | adult name, after the parent/guardian has reviewed the campaign.");
+      return;
+    }
+    const adultName = approvalMatch[2].trim();
+    if (adultName.length < 2 || adultName.length > 100) { await sendText(env, chatId, "Enter the parent/guardian's name (2–100 characters)."); return; }
+    await env.DB.prepare("UPDATE outreach_campaigns SET guardian_approved_at=?, guardian_approved_by=?, auto_send_enabled=0, updated_at=? WHERE id=? AND chat_id=? AND status='active'")
+      .bind(new Date().toISOString(),adultName,new Date().toISOString(),campaign.id,chatId).run();
+    await sendText(env, chatId, "✅ Campaign-level parent/guardian review recorded for campaign #" + campaign.id + ". The adult must personally review the product claims, target group, consent rules, and sending limits before entering this command. This record is not identity verification. Each exact recipient draft still needs a separate guardian review. Automatic sending remains OFF.");
+    return;
+  }
+
+  approvalMatch = /^guardian-review\s+(\d+)\s*\|\s*([\s\S]+)$/i.exec(rest);
+  if (approvalMatch) {
+    const id = Number(approvalMatch[1]);
+    const adultName = approvalMatch[2].trim();
+    if (!campaign || !campaign.guardian_approved_at || adultName.length < 2 || adultName.length > 100) {
+      await sendText(env, chatId, "A parent/guardian must first approve the campaign. Use /outreach guardian-review ID | adult name after they review the exact draft and recipient.");
+      return;
+    }
+    const row = await env.DB.prepare("SELECT id,status,contact_permission_status,permission_source FROM outreach_prospects WHERE id=? AND campaign_id=? AND chat_id=?")
+      .bind(id,campaign.id,chatId).first();
+    if (!row || row.status !== "draft_ready") { await sendText(env, chatId, "Generate the exact email preview first with /outreach draft " + id + "."); return; }
+    if (row.contact_permission_status !== "documented_opt_in" || !row.permission_source) {
+      await sendText(env, chatId, "This contact has no documented opt-in. Record genuine opt-in evidence first with /outreach permission " + id + " | source. A public contact address does not qualify.");
+      return;
+    }
+    await env.DB.prepare("UPDATE outreach_prospects SET guardian_reviewed_at=?,guardian_reviewed_by=?,updated_at=? WHERE id=? AND chat_id=? AND status='draft_ready'")
+      .bind(new Date().toISOString(),adultName,new Date().toISOString(),id,chatId).run();
+    await sendText(env, chatId, "✅ Parent/guardian review recorded for the exact preview to prospect #" + id + ". This is a user-declared record, not identity verification. The recipient must have genuinely opted in. No email was sent.");
+    return;
+  }
+
+  if (lower === "guardian-revoke") {
+    if (!campaign) { await sendText(env, chatId, "No open campaign."); return; }
+    await env.DB.prepare("UPDATE outreach_campaigns SET guardian_approved_at=NULL,guardian_approved_by=NULL,auto_send_enabled=0,updated_at=? WHERE id=? AND chat_id=?")
+      .bind(new Date().toISOString(),campaign.id,chatId).run();
+    await sendText(env, chatId, "🛑 Parent/guardian campaign approval has been revoked. New sends and scheduled follow-ups are blocked until the parent/guardian personally reviews and approves the campaign again. Reply monitoring for already-sent messages can continue.");
+    return;
+  }
+
+  if (lower === "auto-on") {
+    if (!campaign || campaign.status !== "active" || !campaign.guardian_approved_at) {
+      await sendText(env, chatId, "Automatic sending is blocked. The campaign must be active and a parent/guardian must personally review and approve it first.");
+      return;
+    }
+    const eligible = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM outreach_prospects WHERE campaign_id=? AND chat_id=? AND status='draft_ready' AND contact_permission_status='documented_opt_in' AND permission_source IS NOT NULL AND permission_source<>'' AND guardian_reviewed_at IS NOT NULL"
+    ).bind(campaign.id,chatId).first();
+    if (Number(eligible?.n || 0) < 1) {
+      await sendText(env, chatId, "No drafts qualify yet. Each must have documented recipient opt-in and parent/guardian review of the exact recipient and message. Then use /outreach auto-on.");
+      return;
+    }
+    await env.DB.prepare("UPDATE outreach_campaigns SET auto_send_enabled=1,updated_at=? WHERE id=? AND chat_id=? AND status='active' AND guardian_approved_at IS NOT NULL")
+      .bind(new Date().toISOString(),campaign.id,chatId).run();
+    await sendText(env, chatId, "✅ Automatic sending enabled for campaign #" + campaign.id + ". JARVIS will send only drafts marked documented_opt_in with a permission source and exact-draft guardian review. The limit is 3 total initial/follow-up sends per rolling 24 hours. Pause or auto-off stops queued initial sends. Publicly listed contacts remain ineligible.");
+    return;
+  }
+
+  if (lower === "auto-off") {
+    if (!campaign) { await sendText(env, chatId, "No open campaign."); return; }
+    await env.DB.prepare("UPDATE outreach_campaigns SET auto_send_enabled=0,updated_at=? WHERE id=? AND chat_id=?")
+      .bind(new Date().toISOString(),campaign.id,chatId).run();
+    await sendText(env, chatId, "⏸️ Automatic initial sending is OFF. Already-sent email and reply monitoring are unchanged.");
+    return;
+  }
+
   if (lower === "pause") {
     if (!campaign || campaign.status !== "active") { await sendText(env, chatId, "There is no active campaign to pause."); return; }
     await env.DB.prepare("UPDATE outreach_campaigns SET status='paused', updated_at=? WHERE id=? AND chat_id=?")
@@ -797,7 +905,7 @@ async function handleOutreachCommand(env, chatId, raw) {
     if (!campaign) { await sendText(env, chatId, "There is no open campaign."); return; }
     const now = new Date().toISOString();
     await env.DB.batch([
-      env.DB.prepare("UPDATE outreach_campaigns SET status='closed', setup_step=NULL, updated_at=? WHERE id=? AND chat_id=?").bind(now, campaign.id, chatId),
+      env.DB.prepare("UPDATE outreach_campaigns SET status='closed', setup_step=NULL, auto_send_enabled=0, updated_at=? WHERE id=? AND chat_id=?").bind(now, campaign.id, chatId),
       env.DB.prepare("UPDATE outreach_prospects SET followup_due_at=NULL, status=CASE WHEN status IN ('sent','followup_stopped','followup_sending') THEN 'followup_stopped' ELSE status END, updated_at=? WHERE campaign_id=?").bind(now, campaign.id)
     ]);
     await sendText(env, chatId, "✅ Campaign closed. No new emails or follow-ups will be sent. Reply checks for already-sent messages may continue for up to 30 days.");
@@ -805,11 +913,15 @@ async function handleOutreachCommand(env, chatId, raw) {
   }
   if (lower === "prospects" || lower === "list") {
     if (!campaign || campaign.status === "setup") { await sendText(env, chatId, "Finish campaign setup first."); return; }
-    const rows = await env.DB.prepare("SELECT id,email,contact_name,company,status,followup_due_at FROM outreach_prospects WHERE campaign_id=? ORDER BY id DESC LIMIT 25")
+    const rows = await env.DB.prepare("SELECT id,email,contact_name,company,status,followup_due_at,contact_permission_status,guardian_reviewed_at,contact_source_url FROM outreach_prospects WHERE campaign_id=? ORDER BY id DESC LIMIT 25")
       .bind(campaign.id).all();
     await sendText(env, chatId, (rows.results || []).length
       ? "📋 OUTREACH PROSPECTS\n\n" + rows.results.map(p => "#" + p.id + " · " + (p.contact_name || p.company || p.email) +
-        "\n" + p.email + " · " + p.status + (p.followup_due_at ? "\nFollow-up due: " + p.followup_due_at : "")).join("\n\n")
+        "\n" + p.email + " · " + p.status +
+        "\nPermission: " + p.contact_permission_status +
+        " · Guardian draft review: " + (p.guardian_reviewed_at ? "yes" : "no") +
+        (p.contact_source_url ? "\nSource: " + p.contact_source_url : "") +
+        (p.followup_due_at ? "\nFollow-up due: " + p.followup_due_at : "")).join("\n\n")
       : "No prospects yet. Add one with:\n/outreach add email@business.com | Name | Company | Why relevant");
     return;
   }
@@ -957,7 +1069,7 @@ async function handleOutreachCommand(env, chatId, raw) {
         ". You can retry /outreach draft " + id + " after the issue is fixed.");
       return;
     }
-    await env.DB.prepare("UPDATE outreach_prospects SET draft_subject=?, draft_body=?, status='draft_ready', updated_at=? WHERE id=? AND chat_id=? AND status IN ('new','draft_ready')")
+    await env.DB.prepare("UPDATE outreach_prospects SET draft_subject=?, draft_body=?, guardian_reviewed_at=NULL, guardian_reviewed_by=NULL, status='draft_ready', updated_at=? WHERE id=? AND chat_id=? AND status IN ('new','draft_ready')")
       .bind(subject, body, new Date().toISOString(), id, chatId).run();
     await sendText(env, chatId, "✉️ EMAIL PREVIEW — PROSPECT #" + id +
       "\nTo: " + prospect.email + "\nCompany: " + (prospect.company || "(not set)") +
@@ -975,6 +1087,14 @@ async function handleOutreachCommand(env, chatId, raw) {
     if (!prospect || prospect.status !== "draft_ready" || !prospect.draft_subject || !prospect.draft_body) {
       await sendText(env, chatId, "No email preview is ready for this ID. Use /outreach draft ID first."); return;
     }
+    if (prospect.contact_permission_status !== "documented_opt_in" || !prospect.permission_source) {
+      await sendText(env, chatId, "⛔ No email sent. This recipient has no documented opt-in evidence. A public business email is not permission to send marketing.");
+      return;
+    }
+    if (!campaign.guardian_approved_at || !prospect.guardian_reviewed_at) {
+      await sendText(env, chatId, "⛔ No email sent. A parent/guardian must approve the campaign and review this exact recipient and email preview first.");
+      return;
+    }
     const suppressed = await env.DB.prepare("SELECT email FROM outreach_suppressions WHERE chat_id=? AND email=?").bind(chatId, prospect.email).first();
     if (suppressed) { await sendText(env, chatId, "This address is on the opt-out list. No email was sent."); return; }
     const since = new Date(Date.now() - 24*60*60*1000).toISOString();
@@ -986,6 +1106,18 @@ async function handleOutreachCommand(env, chatId, raw) {
     const claim = await env.DB.prepare("UPDATE outreach_prospects SET status='sending', updated_at=? WHERE id=? AND chat_id=? AND status='draft_ready'")
       .bind(now, id, chatId).run();
     if (!claim.meta?.changes) { await sendText(env, chatId, "This draft is already being processed. Check /outreach prospects."); return; }
+    const finalGate = await env.DB.prepare(
+      "SELECT p.id FROM outreach_prospects p JOIN outreach_campaigns c ON c.id=p.campaign_id " +
+      "WHERE p.id=? AND p.chat_id=? AND p.status='sending' AND c.status='active' AND c.guardian_approved_at IS NOT NULL " +
+      "AND p.contact_permission_status='documented_opt_in' AND p.permission_source IS NOT NULL AND p.guardian_reviewed_at IS NOT NULL " +
+      "AND NOT EXISTS (SELECT 1 FROM outreach_suppressions s WHERE s.chat_id=p.chat_id AND s.email=p.email)"
+    ).bind(id,chatId).first();
+    if (!finalGate) {
+      await env.DB.prepare("UPDATE outreach_prospects SET status='draft_ready',updated_at=? WHERE id=? AND chat_id=? AND status='sending'")
+        .bind(new Date().toISOString(),id,chatId).run();
+      await sendText(env, chatId, "⏸️ Send cancelled because the campaign was paused, permission/review changed, or the contact was suppressed. No email was sent.");
+      return;
+    }
     const result = await callGmailBridge(env, { action:"send_email", to:prospect.email, subject:prospect.draft_subject, body:prospect.draft_body });
     if (!result.ok) {
       await env.DB.prepare("UPDATE outreach_prospects SET status='needs_review', last_error=?, updated_at=? WHERE id=? AND chat_id=? AND status='sending'")
@@ -1029,7 +1161,7 @@ async function handleOutreachCommand(env, chatId, raw) {
     const now = new Date().toISOString();
     await env.DB.prepare("INSERT OR IGNORE INTO outreach_suppressions (chat_id,email,reason,created_at) VALUES (?,?,'manual_optout',?)")
       .bind(chatId,email,now).run();
-    await env.DB.prepare("UPDATE outreach_prospects SET status='opted_out', followup_due_at=NULL, updated_at=? WHERE chat_id=? AND email=? AND status NOT IN ('replied','closed_no_reply')")
+    await env.DB.prepare("UPDATE outreach_prospects SET status='opted_out', contact_permission_status='opted_out', followup_due_at=NULL, updated_at=? WHERE chat_id=? AND email=? AND status NOT IN ('replied','closed_no_reply')")
       .bind(now,chatId,email).run();
     await sendText(env, chatId, "🛑 " + email + " was added to your suppression list. JARVIS will not send further outreach to this address.");
     return;
@@ -1158,8 +1290,54 @@ async function processOutreachScheduled(env, scheduledTime) {
       if (result.meta?.changes) await sendText(env,p.chat_id,"📩 POTENTIAL CLIENT REPLIED\n\nProspect #"+p.id+"\nFrom: "+String(reply.from||p.email).slice(0,254)+"\nSubject: "+String(reply.subject||"(no subject)").slice(0,180)+"\nReply detected: "+at+"\n\nAutomatic follow-ups stopped. Open Gmail to read the message; JARVIS checked headers only.");
     }
   }
+
+  const autoRows = await env.DB.prepare(
+    "SELECT p.*,c.sender_name,c.product,c.sender_email FROM outreach_prospects p JOIN outreach_campaigns c ON c.id=p.campaign_id " +
+    "WHERE p.status='draft_ready' AND c.status='active' AND c.auto_send_enabled=1 AND c.guardian_approved_at IS NOT NULL " +
+    "AND p.contact_permission_status='documented_opt_in' AND p.permission_source IS NOT NULL AND p.permission_source<>'' " +
+    "AND p.guardian_reviewed_at IS NOT NULL " +
+    "AND NOT EXISTS (SELECT 1 FROM outreach_suppressions s WHERE s.chat_id=p.chat_id AND s.email=p.email) " +
+    "ORDER BY p.created_at LIMIT 3"
+  ).all();
+  for (const p of autoRows.results || []) {
+    const since = new Date(current.getTime()-24*60*60*1000).toISOString();
+    const count = await env.DB.prepare(
+      "SELECT (SELECT COUNT(*) FROM outreach_prospects WHERE chat_id=? AND sent_at>=?) + " +
+      "(SELECT COUNT(*) FROM outreach_prospects WHERE chat_id=? AND followup_sent_at>=?) AS n"
+    ).bind(p.chat_id,since,p.chat_id,since).first();
+    if (Number(count?.n || 0) >= 3) break;
+    const claim = await env.DB.prepare(
+      "UPDATE outreach_prospects SET status='sending',updated_at=? WHERE id=? AND status='draft_ready' AND guardian_reviewed_at IS NOT NULL AND contact_permission_status='documented_opt_in'"
+    ).bind(now,p.id).run();
+    if (!claim.meta?.changes) continue;
+    const finalGate = await env.DB.prepare(
+      "SELECT p.id FROM outreach_prospects p JOIN outreach_campaigns c ON c.id=p.campaign_id " +
+      "WHERE p.id=? AND p.status='sending' AND c.status='active' AND c.auto_send_enabled=1 AND c.guardian_approved_at IS NOT NULL " +
+      "AND p.contact_permission_status='documented_opt_in' AND p.permission_source IS NOT NULL AND p.permission_source<>'' " +
+      "AND p.guardian_reviewed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM outreach_suppressions s WHERE s.chat_id=p.chat_id AND s.email=p.email)"
+    ).bind(p.id).first();
+    if (!finalGate) {
+      await env.DB.prepare("UPDATE outreach_prospects SET status='draft_ready',updated_at=? WHERE id=? AND status='sending'")
+        .bind(new Date().toISOString(),p.id).run();
+      continue;
+    }
+    const sent = await callGmailBridge(env,{action:"send_email",to:p.email,subject:p.draft_subject,body:p.draft_body});
+    if (!sent.ok) {
+      await env.DB.prepare("UPDATE outreach_prospects SET status='needs_review',last_error=?,updated_at=? WHERE id=? AND status='sending'")
+        .bind(String(sent.error||"Automatic Gmail send outcome uncertain").slice(0,240),new Date().toISOString(),p.id).run();
+      await sendText(env,p.chat_id,"⚠️ JARVIS could not confirm automatic email for prospect #"+p.id+". It will not retry automatically; check Gmail Sent.");
+      continue;
+    }
+    const sentAt = new Date().toISOString();
+    const dueAt = new Date(current.getTime()+4*24*60*60*1000).toISOString();
+    await env.DB.prepare(
+      "UPDATE outreach_prospects SET status='sent',gmail_thread_id=?,gmail_message_id=?,last_rfc822_message_id=?,sent_at=?,followup_due_at=?,last_error=NULL,updated_at=? WHERE id=? AND status='sending'"
+    ).bind(String(sent.threadId||""),String(sent.messageId||""),String(sent.rfc822MessageId||""),sentAt,dueAt,sentAt,p.id).run();
+    await sendText(env,p.chat_id,"📨 Approved automatic email sent to prospect #"+p.id+" ("+p.email+"). One follow-up may be sent in four days if no reply is detected.");
+  }
+
   const due = await env.DB.prepare(
-    "SELECT p.*,c.sender_name,c.product FROM outreach_prospects p JOIN outreach_campaigns c ON c.id=p.campaign_id WHERE p.status='sent' AND c.status='active' AND p.followup_due_at IS NOT NULL AND p.followup_due_at<=? AND p.followup_sent_at IS NULL AND NOT EXISTS (SELECT 1 FROM outreach_suppressions s WHERE s.chat_id=p.chat_id AND s.email=p.email) ORDER BY p.followup_due_at LIMIT 3"
+    "SELECT p.*,c.sender_name,c.product FROM outreach_prospects p JOIN outreach_campaigns c ON c.id=p.campaign_id WHERE p.status='sent' AND c.status='active' AND c.guardian_approved_at IS NOT NULL AND p.contact_permission_status='documented_opt_in' AND p.permission_source IS NOT NULL AND p.guardian_reviewed_at IS NOT NULL AND p.followup_due_at IS NOT NULL AND p.followup_due_at<=? AND p.followup_sent_at IS NULL AND NOT EXISTS (SELECT 1 FROM outreach_suppressions s WHERE s.chat_id=p.chat_id AND s.email=p.email) ORDER BY p.followup_due_at LIMIT 3"
   ).bind(now).all();
   for (const p of due.results || []) {
     if (failed.has(String(p.gmail_thread_id))) continue;
@@ -1180,6 +1358,17 @@ async function processOutreachScheduled(env, scheduledTime) {
     const claim = await env.DB.prepare("UPDATE outreach_prospects SET status='followup_sending',updated_at=? WHERE id=? AND status='sent' AND followup_sent_at IS NULL")
       .bind(now,p.id).run();
     if (!claim.meta?.changes) continue;
+    const finalGate = await env.DB.prepare(
+      "SELECT p.id FROM outreach_prospects p JOIN outreach_campaigns c ON c.id=p.campaign_id " +
+      "WHERE p.id=? AND p.status='followup_sending' AND c.status='active' AND c.guardian_approved_at IS NOT NULL " +
+      "AND p.contact_permission_status='documented_opt_in' AND p.permission_source IS NOT NULL AND p.guardian_reviewed_at IS NOT NULL " +
+      "AND NOT EXISTS (SELECT 1 FROM outreach_suppressions s WHERE s.chat_id=p.chat_id AND s.email=p.email)"
+    ).bind(p.id).first();
+    if (!finalGate) {
+      await env.DB.prepare("UPDATE outreach_prospects SET status='sent',updated_at=? WHERE id=? AND status='followup_sending'")
+        .bind(new Date().toISOString(),p.id).run();
+      continue;
+    }
     const greeting = String(p.contact_name||"").trim() || "there";
     const company = String(p.company||"").trim();
     const body = "Hi "+greeting+",\n\nI'm following up once on my earlier email about "+String(p.product||"my offer").trim()+
@@ -1250,7 +1439,7 @@ async function handleSalesDocument(env, message) {
     "\nSize: " + sizeLabel +
     "\nStatus: QUEUED FOR PRODUCT ANALYSIS" +
     (item.caption ? "\nYour note: " + item.caption : "") +
-    "\n\nJARVIS will process one queued document on the next scheduled run. Product analysis uses only this file. No company research or email sending will start automatically.");
+    "\n\nJARVIS will process one queued document on the next scheduled run. Product analysis uses only this file. No prospect research or email sending will start automatically.");
 }
 
 function formatDocumentSize(bytes) {
@@ -1502,6 +1691,196 @@ async function processSalesDocumentQueue(env) {
   }
 }
 
+
+async function fetchResearchHtml(url, expectedOrigin) {
+  const target = new URL(url);
+  if (target.protocol !== "https:" || target.origin !== expectedOrigin || target.username || target.password) {
+    throw new Error("Research fetch was blocked because the page left the official HTTPS website.");
+  }
+  let response = await fetch(target.toString(), {
+    redirect: "manual",
+    headers: { "accept": "text/html,application/xhtml+xml", "user-agent": "JARVIS-Company-Research/1.0" }
+  });
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers.get("location");
+    if (!location) throw new Error("The company website returned an unsupported redirect.");
+    const redirected = new URL(location, target);
+    if (redirected.protocol !== "https:" || redirected.origin !== expectedOrigin) {
+      throw new Error("The company website redirected outside its official domain; the redirect was blocked.");
+    }
+    response = await fetch(redirected.toString(), {
+      redirect: "manual",
+      headers: { "accept": "text/html,application/xhtml+xml", "user-agent": "JARVIS-Company-Research/1.0" }
+    });
+  }
+  if (!response.ok) throw new Error("The company website returned HTTP " + response.status + ".");
+  const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+  if (!contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) {
+    throw new Error("The company page is not HTML, so it cannot be researched.");
+  }
+  const contentLength = Number(response.headers.get("content-length") || 0);
+  if (contentLength > MAX_RESEARCH_PAGE_BYTES) throw new Error("A company webpage exceeded the 512 KB research page limit.");
+  const buffer = await response.arrayBuffer();
+  if (!buffer.byteLength || buffer.byteLength > MAX_RESEARCH_PAGE_BYTES) {
+    throw new Error("A company webpage was empty or exceeded the 512 KB research page limit.");
+  }
+  return new TextDecoder("utf-8").decode(buffer);
+}
+
+function renderSalesResearchReport(row, profile, emails, sources) {
+  const lines = [
+    "🔎 PROSPECT RESEARCH #" + row.id,
+    "Prospect: " + row.prospect_name,
+    "Website: " + row.website_url,
+    "Product: " + (profile.product_name || ("Sales file #" + row.product_document_id)),
+    "Target customer types from product: " + (Array.isArray(profile.target_customer_types) && profile.target_customer_types.length ? profile.target_customer_types.join(", ") : "Not specified"),
+    "",
+    "PROSPECT TYPE",
+    profile.prospect_type || "Not classified",
+    "PRODUCT-FIT SCORE (research estimate)",
+    String(Number(profile.fit_score || 0)) + "/100",
+    profile.fit_rationale || "No concise fit rationale was returned.",
+    "",
+    "PROSPECT SUMMARY",
+    profile.business_summary || "Not enough evidence on the supplied pages.",
+    "",
+    "WORK / SERVICES",
+    ...(profile.services.length ? profile.services.map(item => "• " + item) : ["Not clearly stated."]),
+    "",
+    "CUSTOMER TYPES",
+    ...(profile.customer_types.length ? profile.customer_types.map(item => "• " + item) : ["Not clearly stated."]),
+    "",
+    "PRODUCT-FIT EVIDENCE (HYPOTHESES, NOT BUYING INTENT)",
+    ...(profile.fit_signals.length ? profile.fit_signals.map(item => "• " + item.evidence + "\n  Source: " + item.sourceUrl) : ["No clear fit evidence found."]),
+    "",
+    "PUBLIC ROLE-BASED CONTACT CHANNELS",
+    ...(emails.length ? emails.map(item => "• " + item.email + "\n  Source: " + item.sourceUrl) : ["No matching role-based email was found on the inspected pages."]),
+    "These are public contact channels only, NOT marketing permission. Do not send outreach without documented opt-in.",
+    "",
+    "SOURCE PAGES",
+    ...(sources.length ? sources.map(url => "• " + url) : ["None"]),
+    "",
+    "MISSING INFORMATION",
+    ...(profile.missing_information.length ? profile.missing_information.map(item => "• " + item) : ["No additional gaps identified."]),
+    "",
+    "Confidence: " + profile.confidence,
+    "A fit score is not proof of interest. No contact was added to an email campaign. No email was sent."
+  ];
+  return lines.join("\n").slice(0, 3800);
+}
+
+async function processSalesResearchQueue(env) {
+  if (!env.DB || !env.AI || !env.TELEGRAM_BOT_TOKEN) return;
+  const row = await env.DB.prepare(
+    "SELECT r.id, r.chat_id, r.prospect_name, r.website_url, r.product_document_id, a.product_profile_json " +
+    "FROM sales_research r JOIN sales_document_analysis a ON a.document_id=r.product_document_id " +
+    "WHERE r.status='pending' ORDER BY r.id LIMIT 1"
+  ).first();
+  if (!row) return;
+
+  const now = new Date().toISOString();
+  const claim = await env.DB.prepare(
+    "UPDATE sales_research SET status='researching', updated_at=? WHERE id=? AND status='pending'"
+  ).bind(now, row.id).run();
+  if (!claim.meta?.changes) return;
+
+  try {
+    const checked = validateResearchRequest(row.prospect_name, row.website_url);
+    if (!checked.ok) throw new Error(checked.error);
+    let productProfile;
+    try { productProfile = JSON.parse(row.product_profile_json || "{}"); }
+    catch { throw new Error("The linked product profile is unreadable. Re-analyze that product file before researching prospects."); }
+    if (!productProfile || typeof productProfile !== "object" || Array.isArray(productProfile) || !productProfile.product_name) {
+      throw new Error("The linked product file has no valid analyzed product profile.");
+    }
+
+    const base = new URL(checked.websiteUrl);
+    const pages = [];
+    const homepageHtml = await fetchResearchHtml(checked.websiteUrl, base.origin);
+    const homepage = extractResearchPage(homepageHtml, checked.websiteUrl, base.hostname);
+    if (!homepage.text) throw new Error("The supplied professional or organization website did not contain readable page text.");
+    pages.push(homepage);
+
+    const moreUrls = discoverResearchPages(homepage.links, checked.websiteUrl, MAX_RESEARCH_PAGES - 1);
+    for (const pageUrl of moreUrls) {
+      try {
+        const html = await fetchResearchHtml(pageUrl, base.origin);
+        const page = extractResearchPage(html, pageUrl, base.hostname);
+        if (page.text) pages.push(page);
+      } catch (error) {
+        console.warn("Sales research skipped a secondary page:", error?.message || "unknown");
+      }
+    }
+
+    const result = await env.AI.run(CLOUD_AI_MODEL, {
+      messages: buildSalesResearchMessages(checked.prospectName, checked.websiteUrl, productProfile, pages),
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "jarvis_product_market_prospect_research",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              prospect_type: { type: "string", enum: ["individual_professional", "team", "business", "nonprofit", "other"] },
+              fit_score: { type: "integer", minimum: 0, maximum: 100 },
+              fit_rationale: { type: "string" },
+              business_summary: { type: "string" },
+              work_or_services: { type: "array", items: { type: "string" } },
+              customer_types: { type: "array", items: { type: "string" } },
+              fit_signals: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    evidence: { type: "string" },
+                    source_url: { type: "string" }
+                  },
+                  required: ["evidence", "source_url"],
+                  additionalProperties: false
+                }
+              },
+              missing_information: { type: "array", items: { type: "string" } },
+              confidence: { type: "string", enum: ["low", "medium", "high"] }
+            },
+            required: ["prospect_type", "fit_score", "fit_rationale", "business_summary", "work_or_services", "customer_types", "fit_signals", "missing_information", "confidence"],
+            additionalProperties: false
+          }
+        }
+      },
+      max_completion_tokens: 1400,
+      reasoning_effort: "low",
+      chat_template_kwargs: { enable_thinking: false },
+      temperature: 0.1
+    });
+    const parsed = parseSalesResearchResult(extractAIText(result));
+    if (!parsed.ok) throw new Error(parsed.error);
+
+    parsed.profile.product_name = String(productProfile.product_name || "Digital product").slice(0, 160);
+    parsed.profile.target_customer_types = Array.isArray(productProfile.target_customer_types)
+      ? productProfile.target_customer_types.slice(0, 8).map(item => String(item).slice(0, 220)) : [];
+    const allowedSources = new Set(pages.map(page => page.sourceUrl));
+    parsed.profile.fit_signals = parsed.profile.fit_signals.filter(signal => allowedSources.has(signal.sourceUrl));
+    const emails = [...new Map(pages.flatMap(page => page.emails).map(item => [item.email, item])).values()].slice(0, 12);
+    const sources = pages.map(page => page.sourceUrl);
+    const completedAt = new Date().toISOString();
+
+    await env.DB.prepare(
+      "UPDATE sales_research SET status='completed', profile_json=?, public_emails_json=?, source_urls_json=?, last_error=NULL, updated_at=? WHERE id=? AND status='researching'"
+    ).bind(JSON.stringify(parsed.profile), JSON.stringify(emails), JSON.stringify(sources), completedAt, row.id).run();
+
+    await sendText(env, row.chat_id, renderSalesResearchReport(row, parsed.profile, emails, sources));
+  } catch (error) {
+    const reason = String(error?.message || "unknown research error").replace(/[\r\n\t]/g, " ").slice(0, 220);
+    await env.DB.prepare(
+      "UPDATE sales_research SET status='failed', last_error=?, updated_at=? WHERE id=? AND status='researching'"
+    ).bind(reason, new Date().toISOString(), row.id).run();
+    await sendText(env, row.chat_id,
+      "⚠️ Prospect research #" + row.id + " could not be completed.\nReason: " + reason +
+      "\nNo email was sent. Check the selected product file and supplied public website, then submit again.");
+  }
+}
+
 async function handleSalesCommand(env, chatId, raw) {
   const rest = raw.replace(/^\/sales(?:@\w+)?/i, "").trim();
   const lower = rest.toLowerCase();
@@ -1519,10 +1898,232 @@ async function handleSalesCommand(env, chatId, raw) {
       "/sales product ID — view a saved product profile",
       "/sales analyze ID — queue or retry a failed analysis",
       "/sales status — show analysis totals",
+      "/sales script ID — generate or refresh a sales script from an analyzed product",
+      "/sales script show ID — view the saved sales script",
+      "/sales prospect RESEARCH_ID | email | contact — add a researched public inbox to an active campaign",
       "",
-      "Uploaded documents are queued for analysis by the existing minute Cron Trigger. Business research, script creation, and campaign automation are later phases.",
+      "Uploaded documents are queued by the minute Cron Trigger. After analysis, compare individuals or organizations with a product using /sales research PRODUCT_FILE_ID | Prospect Name | Website. Generate a product sales script with /sales script ID.",
       "Sales Intelligence never sends an email during product analysis."
     ].join("\n"));
+    return;
+  }
+
+
+
+
+  const salesProspectMatch = /^prospect\s+([\s\S]+)$/i.exec(rest);
+  if (salesProspectMatch) {
+    const fields = salesProspectMatch[1].split("|").map(value => value.trim());
+    if (fields.length !== 3 || !/^\d+$/.test(fields[0]) || !validEmailAddress(fields[1])) {
+      await sendText(env, chatId, "Use /sales prospect RESEARCH_ID | public-role-email | contact name\nThe email must be one of the role-based addresses shown in the saved research report.");
+      return;
+    }
+    const campaign = await getCurrentOutreachCampaign(env, chatId);
+    if (!campaign || campaign.status !== "active") {
+      await sendText(env, chatId, "Set up an active campaign first with /outreach start. No prospect was added.");
+      return;
+    }
+    const researchId = Number(fields[0]);
+    const research = await env.DB.prepare(
+      "SELECT id,prospect_name,website_url,product_document_id,profile_json,public_emails_json,status FROM sales_research WHERE id=? AND chat_id=?"
+    ).bind(researchId,chatId).first();
+    if (!research || research.status !== "completed") {
+      await sendText(env, chatId, "Completed prospect research #" + researchId + " was not found. No prospect was added.");
+      return;
+    }
+    const email = fields[1].toLowerCase();
+    const publicEmails = JSON.parse(research.public_emails_json || "[]");
+    const publicContact = publicEmails.find(item => String(item.email || "").toLowerCase() === email && item.permissionStatus === "public_contact_only");
+    if (!publicContact) {
+      await sendText(env, chatId, "That address was not found as a role-based contact on the official pages in this research report. No prospect was added.");
+      return;
+    }
+    const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM outreach_prospects WHERE campaign_id=?").bind(campaign.id).first();
+    if (Number(count?.n || 0) >= 25) { await sendText(env, chatId, "This first version supports at most 25 prospects per campaign."); return; }
+    const suppressed = await env.DB.prepare("SELECT email FROM outreach_suppressions WHERE chat_id=? AND email=?").bind(chatId,email).first();
+    if (suppressed) { await sendText(env, chatId, "That address is on your opt-out list. No prospect was added."); return; }
+    const duplicate = await env.DB.prepare("SELECT id FROM outreach_prospects WHERE campaign_id=? AND email=?").bind(campaign.id,email).first();
+    if (duplicate) { await sendText(env, chatId, "That email is already prospect #" + duplicate.id + "."); return; }
+    const profile = JSON.parse(research.profile_json || "{}");
+    const signals = (Array.isArray(profile.fit_signals) ? profile.fit_signals : [])
+      .map(item => item.evidence + " (source: " + item.sourceUrl + ")").slice(0,4).join("\n");
+    const context = [
+      "Official website research: " + research.website_url,
+      "Prospect summary: " + String(profile.business_summary || "").slice(0,700),
+      "Product-fit hypotheses (not verified needs): " + (signals || "No clear fit signal recorded."),
+      "Public contact source: " + publicContact.sourceUrl,
+      "Contact status: publicly listed only; explicit marketing opt-in has NOT been confirmed."
+    ].join("\n").slice(0,2000);
+    const now = new Date().toISOString();
+    const saved = await env.DB.prepare(
+      "INSERT INTO outreach_prospects (campaign_id,chat_id,email,contact_name,company,relevance_context,contact_source_url,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'new',?,?)"
+    ).bind(campaign.id,chatId,email,fields[2] || "Professional contact",research.prospect_name,context,publicContact.sourceUrl,now,now).run();
+    await sendText(env, chatId,
+      "✅ Added researched contact as prospect #" + saved.meta?.last_row_id + ".\nCompany: " + research.prospect_name +
+      "\nEmail: " + email + "\nSource: " + publicContact.sourceUrl +
+      "\nPermission: UNVERIFIED — a public address is not consent. Do not send unless the recipient separately opts in. No email was sent.");
+    return;
+  }
+
+  const scriptMatch = /^script(?:\s+(show\s+)?(\d+))?$/i.exec(rest);
+  if (scriptMatch) {
+    const idText = scriptMatch[2] || "";
+    if (!idText) {
+      await sendText(env, chatId,
+        "Use /sales script ID to generate or refresh a sales script from an analyzed product, or /sales script show ID to view the saved script.");
+      return;
+    }
+    const productId = Number(idText);
+    if (scriptMatch[1]) {
+      const saved = await env.DB.prepare(
+        "SELECT s.script_json,d.file_name,a.product_profile_json FROM sales_scripts s " +
+        "JOIN sales_documents d ON d.id=s.product_document_id " +
+        "JOIN sales_document_analysis a ON a.document_id=d.id WHERE s.product_document_id=? AND s.chat_id=?"
+      ).bind(productId,chatId).first();
+      if (!saved) { await sendText(env, chatId, "No saved sales script for product file #" + productId + ". Generate one with /sales script " + productId + "."); return; }
+      const product = JSON.parse(saved.product_profile_json || "{}");
+      const parsed = parseSalesScriptResult(saved.script_json || "");
+      if (!parsed.ok) { await sendText(env, chatId, "The saved script could not be read. Regenerate it with /sales script " + productId + "."); return; }
+      await sendText(env, chatId, renderSalesScript(product.product_name || saved.file_name, parsed.script));
+      return;
+    }
+    const row = await env.DB.prepare(
+      "SELECT d.id,d.chat_id,d.file_name,d.status,a.product_profile_json FROM sales_documents d " +
+      "JOIN sales_document_analysis a ON a.document_id=d.id WHERE d.id=? AND d.chat_id=?"
+    ).bind(productId,chatId).first();
+    if (!row) { await sendText(env, chatId, "I couldn't find analyzed product file #" + productId + "."); return; }
+    if (row.status !== "analyzed" || !row.product_profile_json) {
+      await sendText(env, chatId, "Product file #" + productId + " is not analyzed yet. Finish with /sales product " + productId + " first.");
+      return;
+    }
+    if (!env.AI) { await sendText(env, chatId, "Cloud AI is unavailable, so I couldn't create the sales script."); return; }
+    let profile;
+    try { profile = JSON.parse(row.product_profile_json); }
+    catch { await sendText(env, chatId, "The saved product profile could not be read. No script was created."); return; }
+    try {
+      const output = await env.AI.run(CLOUD_AI_MODEL, {
+        messages: buildSalesScriptMessages(profile),
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "jarvis_sales_script",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                opening: { type: "string" },
+                elevator_pitch: { type: "string" },
+                discovery_questions: { type: "array", items: { type: "string" } },
+                value_points: { type: "array", items: { type: "string" } },
+                objection_responses: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: { objection: { type: "string" }, response: { type: "string" } },
+                    required: ["objection","response"],
+                    additionalProperties: false
+                  }
+                },
+                next_step: { type: "string" },
+                claims_to_avoid: { type: "array", items: { type: "string" } }
+              },
+              required: ["opening","elevator_pitch","discovery_questions","value_points","objection_responses","next_step","claims_to_avoid"],
+              additionalProperties: false
+            }
+          }
+        },
+        max_completion_tokens: 1400,
+        reasoning_effort: "low",
+        chat_template_kwargs: { enable_thinking: false },
+        temperature: 0.1
+      });
+      const parsed = parseSalesScriptResult(extractAIText(output));
+      if (!parsed.ok) throw new Error(parsed.error);
+      const now = new Date().toISOString();
+      await env.DB.prepare(
+        "INSERT INTO sales_scripts (product_document_id,chat_id,script_json,created_at,updated_at) VALUES (?,?,?,?,?) " +
+        "ON CONFLICT(product_document_id) DO UPDATE SET chat_id=excluded.chat_id,script_json=excluded.script_json,updated_at=excluded.updated_at"
+      ).bind(productId,chatId,JSON.stringify(parsed.script),now,now).run();
+      await sendText(env, chatId, renderSalesScript(profile.product_name || row.file_name, parsed.script));
+    } catch (error) {
+      await sendText(env, chatId, "I couldn't create the sales script. Nothing was sent. Reason: " + String(error?.message || "unknown error").slice(0,180));
+    }
+    return;
+  }
+
+  const researchMatch = /^research(?:\s+([\s\S]+))?$/i.exec(rest);
+  if (researchMatch) {
+    const argument = String(researchMatch[1] || "").trim();
+    const lowerArgument = argument.toLowerCase();
+    if (!argument) {
+      await sendText(env, chatId,
+        "Use /sales research PRODUCT_FILE_ID | Prospect Name | https://professional-or-organization-site.com\n" +
+        "The product file must already be analyzed. JARVIS compares the prospect's public website against that product's target customer types and use case.\n" +
+        "Prospects can be individuals, teams, businesses, nonprofits, or other groups.\n" +
+        "Research checks up to three pages on the supplied site and only lists generic role-based inboxes. A public contact address is not marketing permission.");
+      return;
+    }
+    if (lowerArgument === "list" || lowerArgument === "status") {
+      const rows = await env.DB.prepare(
+        "SELECT id, product_document_id, prospect_name, status, created_at, last_error FROM sales_research WHERE chat_id=? ORDER BY id DESC LIMIT 10"
+      ).bind(chatId).all();
+      const items = rows.results || [];
+      await sendText(env, chatId, items.length
+        ? "🔎 PRODUCT-MARKET PROSPECT RESEARCH\n\n" + items.map(item =>
+          "#" + item.id + " · " + item.prospect_name + "\nProduct file: #" + item.product_document_id +
+          "\nStatus: " + item.status + (item.last_error ? "\nIssue: " + item.last_error : "")).join("\n\n")
+        : "No prospect research requests yet. Use /sales research PRODUCT_FILE_ID | Prospect Name | https://official-site.example");
+      return;
+    }
+    const reportMatch = /^(\d+)$/i.exec(argument);
+    if (reportMatch) {
+      const id = Number(reportMatch[1]);
+      const item = await env.DB.prepare(
+        "SELECT id, product_document_id, prospect_name, website_url, status, profile_json, public_emails_json, source_urls_json, last_error FROM sales_research WHERE id=? AND chat_id=?"
+      ).bind(id, chatId).first();
+      if (!item) { await sendText(env, chatId, "I couldn't find prospect research #" + id + "."); return; }
+      if (item.status !== "completed") {
+        await sendText(env, chatId, "Prospect research #" + id + " is " + item.status + "." + (item.last_error ? "\nIssue: " + item.last_error : ""));
+        return;
+      }
+      const profile = JSON.parse(item.profile_json || "{}");
+      const emails = JSON.parse(item.public_emails_json || "[]");
+      const sources = JSON.parse(item.source_urls_json || "[]");
+      await sendText(env, chatId, renderSalesResearchReport(item, profile, emails, sources));
+      return;
+    }
+    const fields = argument.split("|").map(value => value.trim());
+    if (fields.length !== 3 || !/^\d+$/.test(fields[0])) {
+      await sendText(env, chatId, "Use /sales research PRODUCT_FILE_ID | Prospect Name | https://professional-or-organization-site.com");
+      return;
+    }
+    const productId = Number(fields[0]);
+    const product = await env.DB.prepare(
+      "SELECT d.id,d.status,d.file_name,a.product_profile_json FROM sales_documents d " +
+      "JOIN sales_document_analysis a ON a.document_id=d.id WHERE d.id=? AND d.chat_id=?"
+    ).bind(productId, chatId).first();
+    if (!product || product.status !== "analyzed" || !product.product_profile_json) {
+      await sendText(env, chatId, "Sales file #" + productId + " must have a completed product analysis before prospect research. Use /sales product " + productId + " to check it. No research was queued.");
+      return;
+    }
+    const checked = validateResearchRequest(fields[1], fields[2]);
+    if (!checked.ok) { await sendText(env, chatId, "I couldn't queue that prospect research. " + checked.error); return; }
+    const active = await env.DB.prepare(
+      "SELECT COUNT(*) AS total FROM sales_research WHERE chat_id=? AND status IN ('pending','researching')"
+    ).bind(chatId).first();
+    if (Number(active?.total || 0) >= 3) {
+      await sendText(env, chatId, "You already have three prospect research requests queued. Check /sales research status first.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const saved = await env.DB.prepare(
+      "INSERT INTO sales_research (chat_id, product_document_id, prospect_name, website_url, status, created_at, updated_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)"
+    ).bind(chatId, productId, checked.prospectName, checked.websiteUrl, now, now).run();
+    const productProfile = JSON.parse(product.product_profile_json || "{}");
+    await sendText(env, chatId,
+      "🔎 Prospect research #" + saved.meta?.last_row_id + " queued.\nProspect: " + checked.prospectName +
+      "\nProduct: " + String(productProfile.product_name || product.file_name) +
+      "\nJARVIS will compare the supplied public website with that product's target market. This is research only; no prospect will be added and no email will be sent.");
     return;
   }
 
@@ -1555,7 +2156,7 @@ async function handleSalesCommand(env, chatId, raw) {
       "\nAnalyzing: " + (counts.get("analyzing") || 0) +
       "\nAnalyzed: " + (counts.get("analyzed") || 0) +
       "\nFailed: " + (counts.get("failed") || 0) +
-      "\nBusiness research: not enabled yet\nEmail automation: not enabled in Sales Intelligence.");
+      "\nProduct-market prospect research: use /sales research PRODUCT_FILE_ID | Prospect Name | https://official-site.example\nEmail sending remains permission-gated in /outreach.");
     return;
   }
 
@@ -2203,6 +2804,11 @@ export default {
       await processSalesDocumentQueue(env);
     } catch (error) {
       console.error("Sales document queue processing failed:", error?.message || "unknown");
+    }
+    try {
+      await processSalesResearchQueue(env);
+    } catch (error) {
+      console.error("Sales research queue processing failed:", error?.message || "unknown");
     }
   }
 };
