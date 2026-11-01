@@ -49,6 +49,7 @@ export function buildSalesMarketMessages(productProfile) {
         "Infer the most plausible ideal customer profile and up to four distinct target-market segments for the product.",
         "The intended market is the United States. Focus on organizations, businesses, institutions, or customer groups that could realistically use or purchase the product.",
         "For each segment, provide two practical Google search queries that a human can open and review. Include USA or a relevant US state/city phrase in each query.",
+        "Also map the product's target market to up to three relevant 2-digit NAICS industry prefixes for US federal-award data. Only select from this exact list: 11, 21, 22, 23, 31, 32, 33, 42, 44, 45, 48, 49, 51, 52, 53, 54, 55, 56, 61, 62, 71, 72, 81, 92. Leave the list empty when no sector is defensible.",
         "Search queries must discover organizations or businesses, not personal email addresses, private data, or individual people's contact details.",
         "Do not claim that any prospect has been found, verified, or has buying intent. Do not claim that any search was performed.",
         "Return only JSON matching the requested schema."
@@ -75,6 +76,7 @@ export function parseSalesMarketResult(raw) {
   return {
     ok: true,
     plan: {
+      naics_sectors: Array.isArray(value.naics_sectors) ? value.naics_sectors.slice(0, 3).map(item => ({ code: cleanText(item && item.code, 2), name: cleanText(item && item.name, 100), reason: cleanText(item && item.reason, 250) })).filter(item => /^(11|21|22|23|31|32|33|42|44|45|48|49|51|52|53|54|55|56|61|62|71|72|81|92)$/.test(item.code) && item.name) : [],
       ideal_customer_profile: cleanText(value.ideal_customer_profile, 900),
       segments,
       exclusions: cleanList(value.exclusions, 6, 180),
@@ -88,6 +90,9 @@ export function renderSalesMarketPlan(productName, plan) {
     "🎯 PRODUCT-LED USA MARKET PLAN",
     "Product: " + cleanText(productName, 160),
     "",
+    "NAICS SECTORS FOR THE FREE FEDERAL CONTRACTOR LOOKUP",
+    ...(Array.isArray(plan.naics_sectors) && plan.naics_sectors.length ? plan.naics_sectors.map(item => "• " + item.code + " — " + item.name) : ["No defensible NAICS sector identified."]),
+    ""
     "IDEAL CUSTOMER PROFILE",
     plan.ideal_customer_profile || "Not enough product information to define this confidently."
   ];
