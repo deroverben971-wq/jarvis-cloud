@@ -2024,7 +2024,7 @@ async function handleSalesCommand(env, chatId, raw) {
       }
 
       await sendText(env, chatId,
-        "🔎 Searching the free public US construction-company directory. " +
+        "🔎 Searching public US construction-company sources. If the nationwide directory is unavailable, I will try a clearly labeled Ohio-only snapshot fallback. " +
         "I will queue up to " + Math.min(3, slots) +
         " official websites for product-fit research. Personal Gmail addresses are not collected.");
       const directory = await searchUSConstructionCompanies({ limit: 10 });
