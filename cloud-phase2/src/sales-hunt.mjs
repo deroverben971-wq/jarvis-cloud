@@ -168,7 +168,8 @@ async function searchCompaniesDirectory(options = {}) {
 }
 
 
-const PROFIX_ALL_URL = "https://profixdirectory.com/api/all.json";
+const PROFIX_DATASET_URL = "https://huggingface.co/datasets/Pisces89/ohio-home-services-pros/resolve/main/profix-ohio-pros-latest.json";
+const PROFIX_LIVE_URL = "https://profixdirectory.com/api/all.json";
 const PROFIX_SOURCE = "https://profixdirectory.com/open-data";
 const PROFIX_PROFILE_BASE = "https://profixdirectory.com/pro/";
 const OHIO_CONSTRUCTION_TRADES = new Set([
@@ -178,109 +179,110 @@ const OHIO_CONSTRUCTION_TRADES = new Set([
 ]);
 
 /**
- * Narrow fallback source: ProFix publishes a verified Ohio home-services
- * contractor catalogue. Its records are Ohio-only, not a nationwide sample.
- * Ignore any phone/email fields and use only business name, official website,
- * location, trade labels, and the provider's public profile URL.
+ * ProFix publishes the stable monthly snapshot on Hugging Face separately
+ * from its live API host. Try that independent delivery path first, then the
+ * live JSON feed as a secondary fallback. The dataset is Ohio-only.
  */
 export async function searchProFixOhioContractors(options = {}) {
   const limit = Math.max(1, Math.min(10, Number(options.limit) || 5));
-  let response;
-  try {
-    response = await fetch(PROFIX_ALL_URL, {
-      method: "GET",
-      headers: { "accept": "application/json" }
-    });
-  } catch {
-    return {
-      ok: false,
-      error: "ProFix public Ohio contractor data could not be reached.",
-      candidates: [],
-      sourceLabel: "ProFix Directory (Ohio)",
-      sourceUrl: PROFIX_SOURCE,
-      scopeLabel: "Ohio only"
-    };
-  }
+  const sources = [
+    { url: PROFIX_DATASET_URL, label: "ProFix Hugging Face snapshot" },
+    { url: PROFIX_LIVE_URL, label: "ProFix live feed" }
+  ];
+  const sourceErrors = [];
 
-  if (!response.ok) {
-    return {
-      ok: false,
-      error: "ProFix public data returned HTTP " + response.status + ".",
-      candidates: [],
-      sourceLabel: "ProFix Directory (Ohio)",
-      sourceUrl: PROFIX_SOURCE,
-      scopeLabel: "Ohio only"
-    };
-  }
+  for (const source of sources) {
+    let response;
+    try {
+      response = await fetch(source.url, {
+        method: "GET",
+        headers: { "accept": "application/json" }
+      });
+    } catch {
+      sourceErrors.push(source.label + " could not be reached");
+      continue;
+    }
 
-  let payload;
-  try {
-    payload = await response.json();
-  } catch {
-    return {
-      ok: false,
-      error: "ProFix public data was not valid JSON.",
-      candidates: [],
-      sourceLabel: "ProFix Directory (Ohio)",
-      sourceUrl: PROFIX_SOURCE,
-      scopeLabel: "Ohio only"
-    };
-  }
+    if (!response.ok) {
+      sourceErrors.push(source.label + " returned HTTP " + response.status);
+      continue;
+    }
 
-  const records = Array.isArray(payload && payload.record)
-    ? payload.record
-    : (Array.isArray(payload && payload.pros) ? payload.pros : []);
-  if (!records.length) {
-    return {
-      ok: false,
-      error: "ProFix returned no contractor records in its documented record/pros field.",
-      candidates: [],
-      sourceLabel: "ProFix Directory (Ohio)",
-      sourceUrl: PROFIX_SOURCE,
-      scopeLabel: "Ohio only"
-    };
-  }
+    let payload;
+    try {
+      payload = await response.json();
+    } catch {
+      sourceErrors.push(source.label + " returned invalid JSON");
+      continue;
+    }
 
-  const seen = new Set();
-  const candidates = [];
-  for (const row of records) {
-    if (!row || String(row.state || payload.coverage_state || "").toUpperCase() !== "OH") continue;
-    const tradeList = Array.isArray(row.trades)
-      ? row.trades.map(value => clean(value, 50).toLowerCase()).filter(value => OHIO_CONSTRUCTION_TRADES.has(value))
-      : [];
-    if (!tradeList.length) continue;
-    const name = clean(row.name, 180);
-    const website = normalizeWebsite(row.website_url || row.website);
-    if (!name || !website) continue;
-    const checked = validateResearchRequest(name, website);
-    if (!checked.ok || isBlockedHost(checked.hostname)) continue;
-    const hostname = checked.hostname.replace(/^www\./i, "");
-    if (seen.has(hostname)) continue;
-    seen.add(hostname);
-    const city = clean(row.city, 80);
-    const county = clean(row.county, 80);
-    const slug = clean(row.slug, 140);
-    candidates.push({
-      name: checked.prospectName,
-      websiteUrl: "https://" + hostname + "/",
-      hostname,
-      location: [city, county, "Ohio, United States"].filter(Boolean).join(", "),
-      trades: tradeList,
-      verificationTier: clean(row.verification_tier, 50) || "Not supplied",
-      profileUrl: slug ? PROFIX_PROFILE_BASE + encodeURIComponent(slug) : PROFIX_SOURCE
-    });
-    if (candidates.length >= limit) break;
+    const records = Array.isArray(payload && payload.record)
+      ? payload.record
+      : (Array.isArray(payload && payload.pros) ? payload.pros : []);
+    if (!records.length) {
+      sourceErrors.push(source.label + " contained no documented contractor records");
+      continue;
+    }
+
+    const seen = new Set();
+    const candidates = [];
+    for (const row of records) {
+      if (!row || String(row.state || payload.coverage_state || "").toUpperCase() !== "OH") continue;
+      const tradeList = Array.isArray(row.trades)
+        ? row.trades.map(value => clean(value, 50).toLowerCase()).filter(value => OHIO_CONSTRUCTION_TRADES.has(value))
+        : [];
+      if (!tradeList.length) continue;
+      const name = clean(row.name, 180);
+      const website = normalizeWebsite(row.website_url || row.website);
+      if (!name || !website) continue;
+      const checked = validateResearchRequest(name, website);
+      if (!checked.ok || isBlockedHost(checked.hostname)) continue;
+      const hostname = checked.hostname.replace(/^www\\./i, "");
+      if (seen.has(hostname)) continue;
+      seen.add(hostname);
+      const city = clean(row.city, 80);
+      const county = clean(row.county, 80);
+      const slug = clean(row.slug, 140);
+      candidates.push({
+        name: checked.prospectName,
+        websiteUrl: "https://" + hostname + "/",
+        hostname,
+        location: [city, county, "Ohio, United States"].filter(Boolean).join(", "),
+        trades: tradeList,
+        verificationTier: clean(row.verification_tier, 50) || "Not supplied",
+        profileUrl: slug ? PROFIX_PROFILE_BASE + encodeURIComponent(slug) : PROFIX_SOURCE
+      });
+      if (candidates.length >= limit) break;
+    }
+
+    if (!candidates.length) {
+      sourceErrors.push(source.label + " had no matching Ohio contractor records with public websites");
+      continue;
+    }
+
+    return {
+      ok: true,
+      candidates,
+      total: typeof payload.record_count === "number" ? payload.record_count : records.length,
+      sourceLabel: source.label === "ProFix Hugging Face snapshot"
+        ? "ProFix Directory (Ohio) — monthly Hugging Face snapshot"
+        : "ProFix Directory (Ohio) — live feed",
+      sourceUrl: PROFIX_SOURCE,
+      dataUrl: source.url,
+      scopeLabel: "Ohio only",
+      snapshotVersion: clean(payload.version, 30),
+      generatedAt: clean(payload.generated_at, 40),
+      attribution: "Data: ProFix Directory, CC-BY-4.0"
+    };
   }
 
   return {
-    ok: candidates.length > 0,
-    candidates,
-    total: typeof payload.record_count === "number" ? payload.record_count : records.length,
+    ok: false,
+    error: sourceErrors.join("; ") || "No ProFix Ohio source could be read.",
+    candidates: [],
     sourceLabel: "ProFix Directory (Ohio)",
     sourceUrl: PROFIX_SOURCE,
-    scopeLabel: "Ohio only",
-    snapshotVersion: clean(payload.version, 30),
-    attribution: "Data: ProFix Directory, CC-BY-4.0"
+    scopeLabel: "Ohio only"
   };
 }
 
