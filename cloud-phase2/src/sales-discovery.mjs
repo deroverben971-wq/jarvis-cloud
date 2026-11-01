@@ -75,47 +75,64 @@ export async function searchFederalAwardRecipients(sectors, options = {}) {
   const sectorErrors = [];
 
   for (const sector of validSectors) {
+    const requestBody = JSON.stringify({
+      subawards: false,
+      limit: limitPerSector,
+      page: 1,
+      sort: "Last Modified Date",
+      order: "desc",
+      filters: {
+        recipient_scope: "domestic",
+        recipient_type_names: ["category_business", "sole_proprietorship"],
+        award_type_codes: ["A", "B", "C", "D"],
+        time_period: [{ start_date: startDate, end_date: endDate }],
+        naics_codes: { require: [sector.code] }
+      },
+      fields: [
+        "Award ID",
+        "Recipient Name",
+        "Recipient UEI",
+        "recipient_id",
+        "Recipient Location",
+        "Description",
+        "Start Date",
+        "End Date",
+        "Award Amount",
+        "NAICS",
+        "Base Obligation Date",
+        "Last Modified Date",
+        "generated_internal_id"
+      ]
+    });
     let response;
-    try {
-      response = await fetch(API_URL, {
-        method: "POST",
-        headers: { "content-type": "application/json", "accept": "application/json" },
-        body: JSON.stringify({
-          subawards: false,
-          limit: limitPerSector,
-          page: 1,
-          sort: "Last Modified Date",
-          order: "desc",
-          filters: {
-            recipient_scope: "domestic",
-            recipient_type_names: ["category_business", "sole_proprietorship"],
-            award_type_codes: ["A", "B", "C", "D"],
-            time_period: [{ start_date: startDate, end_date: endDate }],
-            naics_codes: { require: [sector.code] }
-          },
-          fields: [
-            "Award ID",
-            "Recipient Name",
-            "Recipient UEI",
-            "recipient_id",
-            "Recipient Location",
-            "Description",
-            "Start Date",
-            "End Date",
-            "Award Amount",
-            "NAICS",
-            "Base Obligation Date",
-            "Last Modified Date",
-            "generated_internal_id"
-          ]
-        })
-      });
-    } catch (error) {
-      sectorErrors.push(sector.code + ": network request failed");
+    let requestFailed = false;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        response = await fetch(API_URL, {
+          method: "POST",
+          headers: { "content-type": "application/json", "accept": "application/json" },
+          body: requestBody
+        });
+      } catch (error) {
+        requestFailed = true;
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, 350));
+          continue;
+        }
+        break;
+      }
+      requestFailed = false;
+      const retryableStatus = [429, 500, 502, 503, 504, 525].includes(response.status);
+      if (response.ok || !retryableStatus || attempt === 1) break;
+      await new Promise(resolve => setTimeout(resolve, 350));
+    }
+    if (requestFailed || !response) {
+      sectorErrors.push(sector.code + ": network request failed after one retry");
       continue;
     }
     if (!response.ok) {
-      sectorErrors.push(sector.code + ": USAspending returned HTTP " + response.status + (response.status === 429 ? " (rate limited; try again later)" : ""));
+      sectorErrors.push(sector.code + ": USAspending returned HTTP " + response.status +
+        ([429, 500, 502, 503, 504, 525].includes(response.status) ? " after one retry" : ""));
       continue;
     }
     let payload;
@@ -185,6 +202,7 @@ export async function searchFederalAwardRecipients(sectors, options = {}) {
     ok: candidates.length > 0,
     candidates,
     searchedSectors: validSectors,
+    completedSectorCount: validSectors.length - sectorErrors.length,
     startDate,
     endDate,
     sectorErrors,
@@ -194,11 +212,20 @@ export async function searchFederalAwardRecipients(sectors, options = {}) {
 
 export function renderFederalAwardCandidates(result, productName) {
   if (!result || !result.ok || !Array.isArray(result.candidates) || !result.candidates.length) {
-    const detail = Array.isArray(result && result.sectorErrors) && result.sectorErrors.length
-      ? "\nSource issues: " + result.sectorErrors.join("; ")
-      : "";
-    return "🔎 USA FEDERAL CONTRACTOR DISCOVERY\nNo matching business recipients were returned for this product's mapped NAICS sectors." +
-      detail + "\nTry /sales market ID to review the sector mapping. No contacts were collected and no email was sent.";
+    const errors = Array.isArray(result && result.sectorErrors) ? result.sectorErrors : [];
+    const detail = errors.length ? "\\nSource issues: " + errors.join("; ") : "";
+    let status;
+    if (result && result.error) {
+      status = result.error;
+    } else if (errors.length && Number(result && result.completedSectorCount || 0) === 0) {
+      status = "USAspending could not complete any sector requests. This is a source connection failure, not evidence that no businesses match.";
+    } else if (errors.length) {
+      status = "No matching recipients were returned by the completed searches; some sectors could not be checked.";
+    } else {
+      status = "No matching business recipients were returned for the sectors successfully searched.";
+    }
+    return "🔎 USA FEDERAL CONTRACTOR DISCOVERY\\n" + status +
+      detail + "\\nReview the mapped sectors with /sales market ID, or retry discovery later if the API was unavailable. No contacts were collected and no email was sent.";
   }
 
   const lines = [
