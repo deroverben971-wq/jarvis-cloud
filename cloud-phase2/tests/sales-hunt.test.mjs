@@ -110,3 +110,50 @@ test("limits result count and safely handles malformed rows", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test("retries a temporary 503 and succeeds when the public directory recovers", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return { ok: false, status: 503, headers: { get: () => "0" } };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        total: 1,
+        rows: [{ name: "Recovered Builder LLC", website: "https://recovered-builder.example" }]
+      })
+    };
+  };
+  try {
+    const result = await searchUSConstructionCompanies({ limit: 3 });
+    assert.equal(calls, 2);
+    assert.equal(result.ok, true);
+    assert.equal(result.attempts, 2);
+    assert.equal(result.candidates[0].name, "Recovered Builder LLC");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("stops after three failed 503 attempts and reports the outage", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return { ok: false, status: 503, headers: { get: () => "0" } };
+  };
+  try {
+    const result = await searchUSConstructionCompanies();
+    assert.equal(calls, 3);
+    assert.equal(result.ok, false);
+    assert.equal(result.attempts, 3);
+    assert.match(result.error, /HTTP 503 after 3 attempts/);
+    assert.deepEqual(result.candidates, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
