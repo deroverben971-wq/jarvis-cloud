@@ -236,3 +236,19 @@ https://developers.cloudflare.com/workers-ai/platform/pricing/
 Cloud AI stores conversation messages and saved facts in D1. /forgetme removes cloud chat history and cloud facts for the configured Telegram chat, but does not erase local C:\Users\noeld\JARVIS\jarvis_memory.db. Avoid saving passwords or other secrets as facts. Reminder tasks, conversation contents, event titles, prospect contact details, email drafts, and reply metadata are personal data; never commit them to this public repository.
 
 Keep the existing Telegram webhook, DB binding, AI binding, and secrets. Updating Worker code does not require re-registering the webhook. The scheduled trigger * * * * * should remain enabled for reminders.
+
+
+## Sales Intelligence — automated US construction company hunt
+
+Use `/sales hunt PRODUCT_FILE_ID` after uploading and successfully analyzing the product document. This initial directory hunt is limited to products whose market plan includes NAICS 23 — Construction.
+
+JARVIS makes one request to the public `companies.directory` US company-directory endpoint, filtering for the Construction industry and records with a website. The public read endpoint is documented as requiring no API key; its published fair-use limit is 60 requests per minute. JARVIS queues at most three new organization websites per request and uses the existing minute research queue to assess them.
+
+The directory provider may return additional contact fields. JARVIS intentionally ignores all directory-provided email and phone fields and stores only company name, location, and website. The existing official-site researcher then checks the supplied homepage and up to two relevant same-domain pages. It reports only generic role-based addresses (for example `info@` or `sales@`) that are visibly published on the company's own domain. Named personal addresses and personal Gmail accounts are not collected.
+
+Check queue progress with `/sales research list`. Each completed research report contains its source pages and product-fit evidence. Directory listings and websites can be incomplete or outdated; verify the organization and the site before relying on a result.
+
+A public business inbox is a contact channel, not marketing consent. The hunt does not add records to an email campaign and does not send messages. The existing opt-in and parent/guardian review requirements remain in force.
+
+Provider documentation: https://companies.directory/docs
+Source catalogue and coverage notes: https://companies.directory/sources
