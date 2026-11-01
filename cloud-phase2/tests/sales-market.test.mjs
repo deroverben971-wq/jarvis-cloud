@@ -77,6 +77,6 @@ test("market plan output provides search links and explains that results were no
   assert.equal(parsed.ok, true);
   const output = renderSalesMarketPlan("Clinic Appointment Assistant", parsed.plan);
   assert.match(output, /https:\/\/www\.google\.com\/search\?q=/);
-  assert.match(output, /does not fetch Google search results automatically/);
+  assert.match(output, /does not fetch Google results automatically/);
   assert.match(output, /No contact was added and no email was sent/);
 });
