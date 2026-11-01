@@ -168,8 +168,8 @@ async function searchCompaniesDirectory(options = {}) {
 }
 
 
-const PROFIX_DATASET_URL = "https://huggingface.co/datasets/Pisces89/ohio-home-services-pros/resolve/main/profix-ohio-pros-latest.json";
-const PROFIX_LIVE_URL = "https://profixdirectory.com/api/all.json";
+const PROFIX_TOP_URL = "https://profixdirectory.com/api/pros.json";
+const PROFIX_CSV_URL = "https://profixdirectory.com/api/pros.csv";
 const PROFIX_SOURCE = "https://profixdirectory.com/open-data";
 const PROFIX_PROFILE_BASE = "https://profixdirectory.com/pro/";
 const OHIO_CONSTRUCTION_TRADES = new Set([
@@ -178,16 +178,92 @@ const OHIO_CONSTRUCTION_TRADES = new Set([
   "water-well", "septic-system", "gas-tech"
 ]);
 
+function parseCsvRecords(input) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let quoted = false;
+  const csv = String(input || "").replace(/^\\uFEFF/, "");
+
+  for (let i = 0; i < csv.length; i++) {
+    const char = csv[i];
+    if (quoted) {
+      if (char === '"' && csv[i + 1] === '"') {
+        field += '"';
+        i++;
+      } else if (char === '"') {
+        quoted = false;
+      } else {
+        field += char;
+      }
+    } else if (char === '"') {
+      quoted = true;
+    } else if (char === ",") {
+      row.push(field);
+      field = "";
+    } else if (char === "\n" || char === "\r") {
+      if (char === "\r" && csv[i + 1] === "\n") i++;
+      row.push(field);
+      field = "";
+      if (row.some(value => value !== "")) rows.push(row);
+      row = [];
+    } else {
+      field += char;
+    }
+  }
+
+  if (field !== "" || row.length) {
+    row.push(field);
+    if (row.some(value => value !== "")) rows.push(row);
+  }
+  if (!rows.length) return [];
+
+  const headers = rows.shift().map(value => clean(value, 80).toLowerCase());
+  return rows.map(values => {
+    const record = {};
+    for (let i = 0; i < headers.length; i++) {
+      if (headers[i]) record[headers[i]] = values[i] ?? "";
+    }
+    return record;
+  });
+}
+
+function extractProFixRecords(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== "object") return [];
+  if (Array.isArray(payload.record)) return payload.record;
+  if (Array.isArray(payload.pros)) return payload.pros;
+  if (Array.isArray(payload.rows)) return payload.rows;
+  if (Array.isArray(payload.records)) return payload.records;
+  if (payload.data && Array.isArray(payload.data)) return payload.data;
+  if (payload.data && Array.isArray(payload.data.pros)) return payload.data.pros;
+  return [];
+}
+
+function normalizeTradeList(value) {
+  if (Array.isArray(value)) return value.map(item => clean(item, 50).toLowerCase()).filter(Boolean);
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) return parsed.map(item => clean(item, 50).toLowerCase()).filter(Boolean);
+  } catch {
+    // Some CSV mirrors may encode trades as a plain delimited string.
+  }
+  return value.split(/[;,|]/).map(item => clean(item, 50).toLowerCase()).filter(Boolean);
+}
+
 /**
- * ProFix publishes the stable monthly snapshot on Hugging Face separately
- * from its live API host. Try that independent delivery path first, then the
- * live JSON feed as a secondary fallback. The dataset is Ohio-only.
+ * Use ProFix's documented compact JSON feed first and its documented CSV
+ * export second. The previous Hugging Face filename returned HTTP 404 in the
+ * deployed Worker, while /api/all.json was intermittently rate-limited.
+ * Only Ohio construction-relevant records with public business websites are
+ * returned. Public phone and email fields are intentionally ignored.
  */
 export async function searchProFixOhioContractors(options = {}) {
   const limit = Math.max(1, Math.min(10, Number(options.limit) || 5));
   const sources = [
-    { url: PROFIX_DATASET_URL, label: "ProFix Hugging Face snapshot" },
-    { url: PROFIX_LIVE_URL, label: "ProFix live feed" }
+    { url: PROFIX_TOP_URL, label: "ProFix compact JSON feed", format: "json" },
+    { url: PROFIX_CSV_URL, label: "ProFix CSV export", format: "csv" }
   ];
   const sourceErrors = [];
 
@@ -196,7 +272,7 @@ export async function searchProFixOhioContractors(options = {}) {
     try {
       response = await fetch(source.url, {
         method: "GET",
-        headers: { "accept": "application/json" }
+        headers: { "accept": source.format === "csv" ? "text/csv" : "application/json" }
       });
     } catch {
       sourceErrors.push(source.label + " could not be reached");
@@ -208,19 +284,22 @@ export async function searchProFixOhioContractors(options = {}) {
       continue;
     }
 
-    let payload;
+    let records = [];
+    let payload = {};
     try {
-      payload = await response.json();
+      if (source.format === "csv") {
+        records = parseCsvRecords(await response.text());
+      } else {
+        payload = await response.json();
+        records = extractProFixRecords(payload);
+      }
     } catch {
-      sourceErrors.push(source.label + " returned invalid JSON");
+      sourceErrors.push(source.label + " returned unreadable data");
       continue;
     }
 
-    const records = Array.isArray(payload && payload.record)
-      ? payload.record
-      : (Array.isArray(payload && payload.pros) ? payload.pros : []);
     if (!records.length) {
-      sourceErrors.push(source.label + " contained no documented contractor records");
+      sourceErrors.push(source.label + " contained no contractor records in a recognized format");
       continue;
     }
 
@@ -228,16 +307,17 @@ export async function searchProFixOhioContractors(options = {}) {
     const candidates = [];
     for (const row of records) {
       if (!row || String(row.state || payload.coverage_state || "").toUpperCase() !== "OH") continue;
-      const tradeList = Array.isArray(row.trades)
-        ? row.trades.map(value => clean(value, 50).toLowerCase()).filter(value => OHIO_CONSTRUCTION_TRADES.has(value))
-        : [];
+      const tradeList = normalizeTradeList(row.trades)
+        .filter(value => OHIO_CONSTRUCTION_TRADES.has(value));
       if (!tradeList.length) continue;
+
       const name = clean(row.name, 180);
       const website = normalizeWebsite(row.website_url || row.website);
       if (!name || !website) continue;
       const checked = validateResearchRequest(name, website);
       if (!checked.ok || isBlockedHost(checked.hostname)) continue;
-      const hostname = checked.hostname.replace(/^www\\./i, "");
+
+      const hostname = checked.hostname.replace(/^www\./i, "");
       if (seen.has(hostname)) continue;
       seen.add(hostname);
       const city = clean(row.city, 80);
@@ -260,13 +340,14 @@ export async function searchProFixOhioContractors(options = {}) {
       continue;
     }
 
+    const total = Number(payload.record_count ?? payload.total);
     return {
       ok: true,
       candidates,
-      total: typeof payload.record_count === "number" ? payload.record_count : records.length,
-      sourceLabel: source.label === "ProFix Hugging Face snapshot"
-        ? "ProFix Directory (Ohio) — monthly Hugging Face snapshot"
-        : "ProFix Directory (Ohio) — live feed",
+      total: Number.isFinite(total) && total > 0 ? total : records.length,
+      sourceLabel: source.label === "ProFix compact JSON feed"
+        ? "ProFix Directory (Ohio) — compact JSON feed"
+        : "ProFix Directory (Ohio) — CSV export",
       sourceUrl: PROFIX_SOURCE,
       dataUrl: source.url,
       scopeLabel: "Ohio only",
