@@ -148,10 +148,10 @@ test("tries the Ohio fallback after three failed nationwide directory attempts",
   };
   try {
     const result = await searchUSConstructionCompanies();
-    assert.equal(calls, 4); // three nationwide attempts plus one Ohio fallback
+    assert.equal(calls, 5); // three nationwide attempts plus two ProFix transports
     assert.equal(result.ok, false);
     assert.match(result.error, /HTTP 503 after 3 attempts/);
-    assert.match(result.error, /Ohio fallback: ProFix public data returned HTTP 503/);
+    assert.match(result.error, /Ohio fallback: ProFix Hugging Face snapshot returned HTTP 503; ProFix live feed returned HTTP 503/);
     assert.deepEqual(result.candidates, []);
   } finally {
     globalThis.fetch = originalFetch;
@@ -167,7 +167,7 @@ test("falls back to the Ohio ProFix catalogue and keeps only organization-level 
     if (String(url).includes("companies.directory")) {
       return { ok: false, status: 503, headers: { get: () => "0" } };
     }
-    assert.equal(String(url), "https://profixdirectory.com/api/all.json");
+    assert.equal(String(url), "https://huggingface.co/datasets/Pisces89/ohio-home-services-pros/resolve/main/profix-ohio-pros-latest.json");
     return {
       ok: true,
       json: async () => ({
@@ -212,7 +212,7 @@ test("falls back to the Ohio ProFix catalogue and keeps only organization-level 
     const result = await searchUSConstructionCompanies({ limit: 5 });
     assert.equal(calls, 4);
     assert.equal(result.ok, true);
-    assert.equal(result.sourceLabel, "ProFix Directory (Ohio)");
+    assert.equal(result.sourceLabel, "ProFix Directory (Ohio) — monthly Hugging Face snapshot");
     assert.equal(result.scopeLabel, "Ohio only");
     assert.equal(result.snapshotVersion, "2026-05");
     assert.equal(result.candidates.length, 1);
