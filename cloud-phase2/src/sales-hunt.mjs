@@ -13,12 +13,12 @@ const BLOCKED_HOSTS = new Set([
 
 function clean(value, max = 180) {
   return typeof value === "string"
-    ? value.replace(/[\\u0000-\\u001f\\u007f]/g, " ").replace(/\\s+/g, " ").trim().slice(0, max)
+    ? value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max)
     : "";
 }
 
 function isBlockedHost(hostname) {
-  const host = String(hostname || "").toLowerCase().replace(/^www\\./, "");
+  const host = String(hostname || "").toLowerCase().replace(/^www\./, "");
   for (const blocked of BLOCKED_HOSTS) {
     if (host === blocked || host.endsWith("." + blocked)) return true;
   }
@@ -28,14 +28,13 @@ function isBlockedHost(hostname) {
 function normalizeWebsite(value) {
   let raw = clean(value, 500);
   if (!raw) return "";
-  if (!/^https?:\\/\\//i.test(raw)) raw = "https://" + raw;
+  if (!/^https?:\/\//i.test(raw)) raw = "https://" + raw;
   try {
     const url = new URL(raw);
     if (url.protocol !== "https:" && url.protocol !== "http:") return "";
     if (url.protocol === "http:" && !url.port) url.protocol = "https:";
     if (url.port && url.port !== "443") return "";
-    url.username = "";
-    url.password = "";
+    if (url.username || url.password) return "";
     url.search = "";
     url.hash = "";
     url.pathname = "/";
@@ -127,7 +126,7 @@ export async function searchUSConstructionCompanies(options = {}) {
   return {
     ok: true,
     candidates,
-    total: Number.isFinite(Number(payload.total)) ? Number(payload.total) : null,
+    total: typeof payload.total === "number" && Number.isFinite(payload.total) ? payload.total : null,
     sourceUrl: DIRECTORY_SOURCE,
     queryUrl: url.toString()
   };
