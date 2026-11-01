@@ -1,6 +1,6 @@
 import { isReminderRequest, manilaInputToUtc, parseReminderRequest } from "./reminder-parser.mjs";
 import { validateSalesDocument } from "./sales-documents.mjs";
-import { buildProductAnalysisMessages, getSalesExtractionMode, normalizeExtractedText, parseProductProfile } from "./sales-analysis.mjs";
+import { buildProductAnalysisMessages, getSalesExtractionMode, MAX_PLAIN_TEXT_BYTES, normalizeExtractedText, parseProductProfile } from "./sales-analysis.mjs";
 
 const HELP = [
   "🤖 JARVIS CLOUD — PHASE 2",
@@ -1379,6 +1379,9 @@ async function processSalesDocumentQueue(env) {
 
       if (mode.mode === "plain_text") {
         stage = "decoding the text document";
+        if (buffer.byteLength > MAX_PLAIN_TEXT_BYTES) {
+          throw new Error("TXT and MD documents must be 512 KB or smaller on the Free Worker. Export longer documents as PDF.");
+        }
         try {
           extractedText = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
         } catch {
