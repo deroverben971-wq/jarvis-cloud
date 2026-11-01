@@ -41,6 +41,27 @@ test("market parser validates and bounds segments and queries", () => {
   assert.equal(parseSalesMarketResult("not json").ok, false);
 });
 
+test("NAICS mappings are restricted to recognized 2-digit sectors", () => {
+  const parsed = parseSalesMarketResult(JSON.stringify({
+    ideal_customer_profile: "US construction businesses.",
+    segments: [{
+      name: "General contractors",
+      why_fit: "They manage projects.",
+      buyer_roles: ["Owner"],
+      search_queries: ["general contractors USA official company websites"]
+    }],
+    naics_sectors: [
+      { code: "23", name: "Construction", reason: "Direct industry fit." },
+      { code: "999", name: "Invalid sector", reason: "Not a recognized sector." },
+      { code: "236220", name: "Full NAICS code", reason: "Too specific for this sector filter." }
+    ],
+    exclusions: [],
+    caveats: ""
+  }));
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.plan.naics_sectors.map(item => item.code), ["23"]);
+});
+
 test("market plan output provides search links and explains that results were not fetched", () => {
   const parsed = parseSalesMarketResult(JSON.stringify({
     ideal_customer_profile: "US dental practices.",
