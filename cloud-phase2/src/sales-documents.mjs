@@ -3,6 +3,7 @@ export const MAX_TELEGRAM_DOWNLOAD_BYTES = 20 * 1024 * 1024;
 const ACCEPTED_TYPES = {
   ".pdf": ["application/pdf"],
   ".docx": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  ".xlsx": ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
   ".pptx": ["application/vnd.openxmlformats-officedocument.presentationml.presentation"],
   ".txt": ["text/plain"],
   ".md": ["text/markdown", "text/plain"],
