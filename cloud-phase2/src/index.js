@@ -1941,8 +1941,12 @@ async function generateProductMarketPlan(env, productProfile) {
   });
   const parsed = parseSalesMarketResult(extractAIText(output));
   if (!parsed.ok) throw new Error(parsed.error);
-  if (!parsed.plan.naics_sectors.length) {
-    parsed.plan.naics_sectors = inferNAICSSectorsFromProduct(productProfile, parsed.plan);
+  const inferredSectors = inferNAICSSectorsFromProduct(productProfile, parsed.plan);
+  if (inferredSectors.length) {
+    parsed.plan.naics_sectors = [
+      ...inferredSectors,
+      ...parsed.plan.naics_sectors.filter(item => item.code !== inferredSectors[0].code)
+    ].slice(0, 3);
   }
   return parsed.plan;
 }
