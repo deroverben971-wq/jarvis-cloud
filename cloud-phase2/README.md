@@ -111,6 +111,10 @@ Use the existing Telegram chat:
 - `/sales research Company Name | https://official-company-website.example` — queue research of a supplied official company website.
 - `/sales research list` — list recent research requests.
 - `/sales research ID` — view the completed report.
+- `/sales script PRODUCT_FILE_ID` — generate or refresh a product sales script.
+- `/sales script show PRODUCT_FILE_ID` — view the saved script.
+
+The script generator creates a beginner-friendly opening, 30-second pitch, discovery questions, value points, objection responses, a low-pressure next step, and claims to avoid. It uses only the analyzed product profile and never invents prices or customer results.
 
 The researcher checks the supplied HTTPS homepage and up to two same-origin Contact/About/Services pages. It does not run a general search engine or crawl the wider web. It extracts only generic role-based addresses (such as `info@`, `sales@`, and `contact@`) listed on those pages; it does not collect named personal email addresses. Every report includes the pages used as sources and distinguishes possible product fit from verified facts.
 
