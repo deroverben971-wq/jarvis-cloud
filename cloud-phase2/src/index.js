@@ -1986,7 +1986,7 @@ async function handleSalesCommand(env, chatId, raw) {
 
 
 
-  const huntMatch = /^hunt\\s+(\\d+)$/i.exec(rest);
+  const huntMatch = /^hunt\s+(\d+)$/i.exec(rest);
   if (huntMatch) {
     const productId = Number(huntMatch[1]);
     const product = await env.DB.prepare(
@@ -2031,7 +2031,7 @@ async function handleSalesCommand(env, chatId, raw) {
       if (!directory.ok) {
         await sendText(env, chatId,
           "⚠️ The company directory search could not be completed. " + directory.error +
-          "\\nNo company research was queued and no email was sent.");
+          "\nNo company research was queued and no email was sent.");
         return;
       }
 
@@ -2092,13 +2092,13 @@ async function handleSalesCommand(env, chatId, raw) {
         "Directory data can be incomplete or outdated; verify each organization and website."
       );
       if (skipped.length) lines.push("Already researched and skipped: " + skipped.slice(0, 5).join(", "));
-      await sendText(env, chatId, lines.join("\\n"));
+      await sendText(env, chatId, lines.join("\n"));
     } catch (error) {
       console.error("Sales prospect hunt failed:", error?.message || "unknown error");
       await sendText(env, chatId,
         "⚠️ JARVIS could not complete the company hunt. Reason: " +
-        String(error?.message || "unknown error").replace(/[\\r\\n\\t]/g, " ").slice(0, 180) +
-        "\\nNo email was sent.");
+        String(error?.message || "unknown error").replace(/[\r\n\t]/g, " ").slice(0, 180) +
+        "\nNo email was sent.");
     }
     return;
   }
