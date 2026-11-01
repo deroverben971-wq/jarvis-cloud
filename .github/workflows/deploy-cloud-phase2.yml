@@ -57,7 +57,6 @@ jobs:
           node --check cloud-phase2/src/reminder-parser.mjs
           node --check cloud-phase2/src/sales-documents.mjs
           node --check cloud-phase2/src/sales-analysis.mjs
-          node --check cloud-phase2/src/sales-documents.mjs
           node --check cloud-phase2/bootstrap-api-deploy.mjs
           node --test cloud-phase2/tests/*.test.mjs
           node --check cloud-phase2/gmail-outreach-apps-script.js
@@ -76,10 +75,6 @@ jobs:
       - name: Validate Wrangler bundle without deploying
         run: npx --yes wrangler@4 deploy --dry-run --outdir /tmp/jarvis-cloud-dry-run --config cloud-phase2/wrangler.jsonc
 
-      - name: Production database migration reminder
-        run: |
-          echo "Before running this guarded workflow, apply cloud-phase2/migrations/20261101_sales_documents.sql once to the existing jarvis-reminders D1 database."
-          echo "This workflow validates SQL but does not run remote D1 migrations."
       - name: Production database migration reminder
         run: |
           echo "Before deployment, apply cloud-phase2/migrations/20261101_sales_documents.sql and cloud-phase2/migrations/20261102_sales_document_analysis.sql to the existing jarvis-reminders D1 database."
