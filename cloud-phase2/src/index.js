@@ -33,7 +33,7 @@ const HELP = [
   "/sales product ID — show the saved product analysis",
   "/sales analyze ID — queue or retry product analysis",
   "/sales research PRODUCT_FILE_ID | Prospect Name | https://official-site.example — compare a prospect with a product's target market",
-  "/sales research list — list recent company research",
+  "/sales research list — list product-linked prospect research",
   "/sales research ID — view a research report",
   "/sales prospect RESEARCH_ID | email | contact — add a researched public inbox to a campaign",
   "Upload PDF, DOCX, XLSX, CSV, TXT, or MD as a Telegram document (not as a photo).",
@@ -1439,7 +1439,7 @@ async function handleSalesDocument(env, message) {
     "\nSize: " + sizeLabel +
     "\nStatus: QUEUED FOR PRODUCT ANALYSIS" +
     (item.caption ? "\nYour note: " + item.caption : "") +
-    "\n\nJARVIS will process one queued document on the next scheduled run. Product analysis uses only this file. No company research or email sending will start automatically.");
+    "\n\nJARVIS will process one queued document on the next scheduled run. Product analysis uses only this file. No prospect research or email sending will start automatically.");
 }
 
 function formatDocumentSize(bytes) {
@@ -1928,7 +1928,7 @@ async function handleSalesCommand(env, chatId, raw) {
       "SELECT id,prospect_name,website_url,product_document_id,profile_json,public_emails_json,status FROM sales_research WHERE id=? AND chat_id=?"
     ).bind(researchId,chatId).first();
     if (!research || research.status !== "completed") {
-      await sendText(env, chatId, "Completed company research #" + researchId + " was not found. No prospect was added.");
+      await sendText(env, chatId, "Completed prospect research #" + researchId + " was not found. No prospect was added.");
       return;
     }
     const email = fields[1].toLowerCase();
