@@ -59,6 +59,7 @@ jobs:
           node --check cloud-phase2/src/sales-analysis.mjs
           node --check cloud-phase2/src/sales-research.mjs
           node --check cloud-phase2/src/sales-scripts.mjs
+          node --check cloud-phase2/src/sales-market.mjs
           node --check cloud-phase2/bootstrap-api-deploy.mjs
           node --test cloud-phase2/tests/*.test.mjs
           node --check cloud-phase2/gmail-outreach-apps-script.js
