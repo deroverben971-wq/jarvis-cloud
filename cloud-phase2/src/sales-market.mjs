@@ -69,7 +69,7 @@ export function parseSalesMarketResult(raw) {
     why_fit: cleanText(item && item.why_fit, 500),
     buyer_roles: cleanList(item && item.buyer_roles, 5, 100),
     search_queries: cleanList(item && item.search_queries, 2, 180)
-      .filter(query => !/@|\bemail\b|\bphone number\b|\bpersonal contact\b/i.test(query))
+      .filter(query => !/@|\bemail address\b|\bphone number\b|\bpersonal contact\b|\bcontact list\b/i.test(query))
   })).filter(item => item.name && item.search_queries.length) : [];
   if (!segments.length) return { ok: false, error: "The market analyst did not identify usable target segments and search queries." };
   return {
