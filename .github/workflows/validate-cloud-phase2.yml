@@ -59,6 +59,10 @@ jobs:
           node --check cloud-phase2/src/sales-analysis.mjs
       - name: Test reminder and Sales Intelligence helpers
         run: node --test cloud-phase2/tests/*.test.mjs
+      - name: Validate Wrangler Worker bundle without deploying
+        run: |
+          npx --yes wrangler@4 deploy --dry-run --outdir /tmp/jarvis-sales-worker --config cloud-phase2/wrangler.jsonc
+          test -s /tmp/jarvis-sales-worker/index.js
       - name: Check Google Apps Script JavaScript syntax
         run: |
           cp cloud-phase2/google-calendar-apps-script.js /tmp/google-calendar-apps-script.js
