@@ -55,8 +55,9 @@ jobs:
           PY
           node --check cloud-phase2/src/index.js
           node --check cloud-phase2/src/reminder-parser.mjs
+          node --check cloud-phase2/src/sales-documents.mjs
           node --check cloud-phase2/bootstrap-api-deploy.mjs
-          node --test cloud-phase2/tests/reminder-parser.test.mjs
+          node --test cloud-phase2/tests/*.test.mjs
           node --check cloud-phase2/gmail-outreach-apps-script.js
           python -m json.tool cloud-phase2/appsscript.json > /dev/null
           python -m json.tool cloud-phase2/gmail-outreach-appsscript.json > /dev/null
@@ -65,13 +66,18 @@ jobs:
           from pathlib import Path
           conn = sqlite3.connect(":memory:")
           conn.executescript(Path("cloud-phase2/schema.sql").read_text(encoding="utf-8"))
-          conn.executescript(Path("cloud-phase2/migrations/20261029_daily_schedule_briefings.sql").read_text(encoding="utf-8"))
-          print("D1 schema and daily schedule migration validation passed.")
+          for migration_path in sorted(Path("cloud-phase2/migrations").glob("*.sql")):
+              conn.executescript(migration_path.read_text(encoding="utf-8"))
+          print("D1 base schema and all additive migrations passed syntax validation.")
           PY
 
       - name: Validate Wrangler bundle without deploying
         run: npx --yes wrangler@4 deploy --dry-run --outdir /tmp/jarvis-cloud-dry-run --config cloud-phase2/wrangler.jsonc
 
+      - name: Production database migration reminder
+        run: |
+          echo "Before running this guarded workflow, apply cloud-phase2/migrations/20261101_sales_documents.sql once to the existing jarvis-reminders D1 database."
+          echo "This workflow validates SQL but does not run remote D1 migrations."
       - name: Check Cloudflare credentials are configured
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
