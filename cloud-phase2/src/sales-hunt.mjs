@@ -58,26 +58,59 @@ export async function searchUSConstructionCompanies(options = {}) {
   url.searchParams.set("sort", "coverage");
 
   let response;
-  try {
-    response = await fetch(url.toString(), {
-      method: "GET",
-      headers: { "accept": "application/json" }
-    });
-  } catch {
+  let networkFailure = false;
+  let attempts = 0;
+  const retryableStatuses = new Set([429, 500, 502, 503, 504, 520, 522, 523, 524, 525]);
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    attempts = attempt + 1;
+    try {
+      response = await fetch(url.toString(), {
+        method: "GET",
+        headers: { "accept": "application/json" }
+      });
+      networkFailure = false;
+    } catch {
+      networkFailure = true;
+      if (attempt === 2) break;
+    }
+
+    if (!networkFailure && response && (response.ok || !retryableStatuses.has(response.status))) break;
+    if (attempt === 2) break;
+
+    let delayMs = attempt === 0 ? 600 : 1600;
+    if (!networkFailure && response) {
+      const retryAfter = String(response.headers?.get?.("retry-after") || "").trim();
+      if (retryAfter) {
+        const seconds = Number(retryAfter);
+        const retryAt = Number.isFinite(seconds)
+          ? Date.now() + Math.max(0, seconds) * 1000
+          : Date.parse(retryAfter);
+        if (Number.isFinite(retryAt)) {
+          delayMs = Math.min(3000, Math.max(250, retryAt - Date.now()));
+        }
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, delayMs));
+  }
+
+  if (networkFailure || !response) {
     return {
       ok: false,
-      error: "The company directory could not be reached.",
+      error: "The company directory could not be reached after " + attempts + " attempts.",
       candidates: [],
-      sourceUrl: DIRECTORY_SOURCE
+      sourceUrl: DIRECTORY_SOURCE,
+      attempts
     };
   }
 
   if (!response.ok) {
     return {
       ok: false,
-      error: "The company directory returned HTTP " + response.status + ".",
+      error: "The company directory returned HTTP " + response.status + " after " + attempts + " attempts.",
       candidates: [],
-      sourceUrl: DIRECTORY_SOURCE
+      sourceUrl: DIRECTORY_SOURCE,
+      attempts
     };
   }
 
