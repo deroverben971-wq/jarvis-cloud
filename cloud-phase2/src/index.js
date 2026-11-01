@@ -47,6 +47,7 @@ const HELP = [
   "/outreach permission ID | evidence — record explicit recipient opt-in",
   "/outreach guardian-approve CAMPAIGN_ID | adult name — record campaign review",
   "/outreach guardian-review ID | adult name — review an exact draft",
+  "/outreach guardian-revoke — revoke campaign approval and block sends",
   "/outreach auto-on or /outreach auto-off — control pre-reviewed opt-in drafts",
   "/outreach pause or /outreach resume — control follow-ups",
   "/outreach optout EMAIL — suppress an address from future outreach",
@@ -731,6 +732,7 @@ function outreachHelp(campaign) {
     "/outreach permission ID | opt-in evidence — record documented permission",
     "/outreach guardian-approve CAMPAIGN_ID | adult name — record parent/guardian campaign review",
     "/outreach guardian-review ID | adult name — record review of the exact draft",
+    "/outreach guardian-revoke — revoke campaign approval and block sends",
     "/outreach auto-on — send only eligible, guardian-reviewed drafts automatically",
     "/outreach auto-off — disable automatic initial sends",
     "/outreach stop ID — stop future follow-ups for one prospect",
@@ -847,6 +849,14 @@ async function handleOutreachCommand(env, chatId, raw) {
     await env.DB.prepare("UPDATE outreach_prospects SET guardian_reviewed_at=?,guardian_reviewed_by=?,updated_at=? WHERE id=? AND chat_id=? AND status='draft_ready'")
       .bind(new Date().toISOString(),adultName,new Date().toISOString(),id,chatId).run();
     await sendText(env, chatId, "✅ Parent/guardian review recorded for the exact preview to prospect #" + id + ". This is a user-declared record, not identity verification. The recipient must have genuinely opted in. No email was sent.");
+    return;
+  }
+
+  if (lower === "guardian-revoke") {
+    if (!campaign) { await sendText(env, chatId, "No open campaign."); return; }
+    await env.DB.prepare("UPDATE outreach_campaigns SET guardian_approved_at=NULL,guardian_approved_by=NULL,auto_send_enabled=0,updated_at=? WHERE id=? AND chat_id=?")
+      .bind(new Date().toISOString(),campaign.id,chatId).run();
+    await sendText(env, chatId, "🛑 Parent/guardian campaign approval has been revoked. New sends and scheduled follow-ups are blocked until the parent/guardian personally reviews and approves the campaign again. Reply monitoring for already-sent messages can continue.");
     return;
   }
 
@@ -1094,6 +1104,18 @@ async function handleOutreachCommand(env, chatId, raw) {
     const claim = await env.DB.prepare("UPDATE outreach_prospects SET status='sending', updated_at=? WHERE id=? AND chat_id=? AND status='draft_ready'")
       .bind(now, id, chatId).run();
     if (!claim.meta?.changes) { await sendText(env, chatId, "This draft is already being processed. Check /outreach prospects."); return; }
+    const finalGate = await env.DB.prepare(
+      "SELECT p.id FROM outreach_prospects p JOIN outreach_campaigns c ON c.id=p.campaign_id " +
+      "WHERE p.id=? AND p.chat_id=? AND p.status='sending' AND c.status='active' AND c.guardian_approved_at IS NOT NULL " +
+      "AND p.contact_permission_status='documented_opt_in' AND p.permission_source IS NOT NULL AND p.guardian_reviewed_at IS NOT NULL " +
+      "AND NOT EXISTS (SELECT 1 FROM outreach_suppressions s WHERE s.chat_id=p.chat_id AND s.email=p.email)"
+    ).bind(id,chatId).first();
+    if (!finalGate) {
+      await env.DB.prepare("UPDATE outreach_prospects SET status='draft_ready',updated_at=? WHERE id=? AND chat_id=? AND status='sending'")
+        .bind(new Date().toISOString(),id,chatId).run();
+      await sendText(env, chatId, "⏸️ Send cancelled because the campaign was paused, permission/review changed, or the contact was suppressed. No email was sent.");
+      return;
+    }
     const result = await callGmailBridge(env, { action:"send_email", to:prospect.email, subject:prospect.draft_subject, body:prospect.draft_body });
     if (!result.ok) {
       await env.DB.prepare("UPDATE outreach_prospects SET status='needs_review', last_error=?, updated_at=? WHERE id=? AND chat_id=? AND status='sending'")
@@ -1286,6 +1308,17 @@ async function processOutreachScheduled(env, scheduledTime) {
       "UPDATE outreach_prospects SET status='sending',updated_at=? WHERE id=? AND status='draft_ready' AND guardian_reviewed_at IS NOT NULL AND contact_permission_status='documented_opt_in'"
     ).bind(now,p.id).run();
     if (!claim.meta?.changes) continue;
+    const finalGate = await env.DB.prepare(
+      "SELECT p.id FROM outreach_prospects p JOIN outreach_campaigns c ON c.id=p.campaign_id " +
+      "WHERE p.id=? AND p.status='sending' AND c.status='active' AND c.auto_send_enabled=1 AND c.guardian_approved_at IS NOT NULL " +
+      "AND p.contact_permission_status='documented_opt_in' AND p.permission_source IS NOT NULL AND p.permission_source<>'' " +
+      "AND p.guardian_reviewed_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM outreach_suppressions s WHERE s.chat_id=p.chat_id AND s.email=p.email)"
+    ).bind(p.id).first();
+    if (!finalGate) {
+      await env.DB.prepare("UPDATE outreach_prospects SET status='draft_ready',updated_at=? WHERE id=? AND status='sending'")
+        .bind(new Date().toISOString(),p.id).run();
+      continue;
+    }
     const sent = await callGmailBridge(env,{action:"send_email",to:p.email,subject:p.draft_subject,body:p.draft_body});
     if (!sent.ok) {
       await env.DB.prepare("UPDATE outreach_prospects SET status='needs_review',last_error=?,updated_at=? WHERE id=? AND status='sending'")
@@ -1323,6 +1356,17 @@ async function processOutreachScheduled(env, scheduledTime) {
     const claim = await env.DB.prepare("UPDATE outreach_prospects SET status='followup_sending',updated_at=? WHERE id=? AND status='sent' AND followup_sent_at IS NULL")
       .bind(now,p.id).run();
     if (!claim.meta?.changes) continue;
+    const finalGate = await env.DB.prepare(
+      "SELECT p.id FROM outreach_prospects p JOIN outreach_campaigns c ON c.id=p.campaign_id " +
+      "WHERE p.id=? AND p.status='followup_sending' AND c.status='active' AND c.guardian_approved_at IS NOT NULL " +
+      "AND p.contact_permission_status='documented_opt_in' AND p.permission_source IS NOT NULL AND p.guardian_reviewed_at IS NOT NULL " +
+      "AND NOT EXISTS (SELECT 1 FROM outreach_suppressions s WHERE s.chat_id=p.chat_id AND s.email=p.email)"
+    ).bind(p.id).first();
+    if (!finalGate) {
+      await env.DB.prepare("UPDATE outreach_prospects SET status='sent',updated_at=? WHERE id=? AND status='followup_sending'")
+        .bind(new Date().toISOString(),p.id).run();
+      continue;
+    }
     const greeting = String(p.contact_name||"").trim() || "there";
     const company = String(p.company||"").trim();
     const body = "Hi "+greeting+",\n\nI'm following up once on my earlier email about "+String(p.product||"my offer").trim()+
