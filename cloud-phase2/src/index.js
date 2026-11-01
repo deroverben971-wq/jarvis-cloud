@@ -1511,7 +1511,7 @@ async function handleSalesCommand(env, chatId, raw) {
       "🧠 JARVIS SALES INTELLIGENCE — PRODUCT ANALYSIS",
       "",
       "Upload a product document in this Telegram chat using the attachment button → File.",
-      "Supported for analysis: PDF, DOCX, XLSX, CSV, TXT, and MD. Telegram download limit: 20 MB.",
+      "Supported for analysis: PDF, DOCX, XLSX, and CSV up to 20 MB; TXT and MD up to 512 KB.",
       "PPTX files can be stored, but export them as PDF before asking JARVIS to analyze them.",
       "",
       "/sales files — list received product documents",
