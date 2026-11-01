@@ -80,3 +80,41 @@ test("returns a safe notice when the product has no usable NAICS mapping", async
   assert.equal(result.ok, false);
   assert.equal(result.candidates.length, 0);
 });
+
+
+test("retries one transient USAspending 525 response", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) return { ok: false, status: 525 };
+    return { ok: true, json: async () => ({ results: [] }) };
+  };
+  try {
+    const result = await searchFederalAwardRecipients([{code:"23",name:"Construction"}]);
+    assert.equal(calls, 2);
+    assert.equal(result.completedSectorCount, 1);
+    assert.deepEqual(result.sectorErrors, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("reports total USAspending failure as unavailable, not as zero matches", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return { ok: false, status: 525 };
+  };
+  try {
+    const result = await searchFederalAwardRecipients([{code:"23",name:"Construction"}]);
+    assert.equal(calls, 2);
+    assert.equal(result.completedSectorCount, 0);
+    const output = renderFederalAwardCandidates(result, "Contractor Profit Control Center");
+    assert.match(output, /source connection failure, not evidence that no businesses match/i);
+    assert.doesNotMatch(output, /No matching business recipients were returned for this product/i);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
