@@ -22,11 +22,11 @@ test("research URL removes search and fragment", () => {
 });
 
 test("HTML extraction omits scripts and returns only same-domain role inboxes", () => {
-  const html = \`<html><head><title>Acme Construction</title><script>secret@example.com</script></head>
-  <body><h1>Commercial construction</h1><p>We build commercial projects.</p>
-  <a href="/contact">Contact us</a><a href="https://other.example/contact">Other site</a>
-  <p>Contact info@acme.example or Jane at jane@acme.example.</p>
-  <p>sales@acme.example and info@other.example</p><footer>footer@example.com</footer></body></html>\`;
+  const html = "<html><head><title>Acme Construction</title><script>secret@example.com</script></head>" +
+    "<body><h1>Commercial construction</h1><p>We build commercial projects.</p>" +
+    "<a href=\"/contact\">Contact us</a><a href=\"https://other.example/contact\">Other site</a>" +
+    "<p>Contact info@acme.example or Jane at jane@acme.example.</p>" +
+    "<p>sales@acme.example and info@other.example</p><footer>footer@example.com</footer></body></html>";
   const result = extractResearchPage(html, "https://www.acme.example/", "acme.example");
   assert.equal(result.title, "Acme Construction");
   assert.match(result.text, /Commercial construction/);
