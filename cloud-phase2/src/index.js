@@ -808,7 +808,7 @@ async function handleOutreachCommand(env, chatId, raw) {
     const row = await env.DB.prepare("SELECT id,status FROM outreach_prospects WHERE id=? AND campaign_id=? AND chat_id=?")
       .bind(id,campaign.id,chatId).first();
     if (!row || !["new","draft_ready"].includes(row.status)) { await sendText(env, chatId, "That is not an editable prospect in this campaign."); return; }
-    await env.DB.prepare("UPDATE outreach_prospects SET contact_permission_status='documented_opt_in', permission_source=?, permission_verified_at=?, updated_at=? WHERE id=? AND chat_id=?")
+    await env.DB.prepare("UPDATE outreach_prospects SET contact_permission_status='documented_opt_in', permission_source=?, permission_verified_at=?, guardian_reviewed_at=NULL, guardian_reviewed_by=NULL, updated_at=? WHERE id=? AND chat_id=?")
       .bind(evidence,new Date().toISOString(),new Date().toISOString(),id,chatId).run();
     await sendText(env, chatId, "✅ Opt-in evidence recorded for prospect #" + id + ". This is your record of permission; only use it when the recipient genuinely requested or agreed to receive messages. A publicly listed email alone does not qualify. No email was sent.");
     return;
@@ -893,7 +893,7 @@ async function handleOutreachCommand(env, chatId, raw) {
     if (!campaign) { await sendText(env, chatId, "There is no open campaign."); return; }
     const now = new Date().toISOString();
     await env.DB.batch([
-      env.DB.prepare("UPDATE outreach_campaigns SET status='closed', setup_step=NULL, updated_at=? WHERE id=? AND chat_id=?").bind(now, campaign.id, chatId),
+      env.DB.prepare("UPDATE outreach_campaigns SET status='closed', setup_step=NULL, auto_send_enabled=0, updated_at=? WHERE id=? AND chat_id=?").bind(now, campaign.id, chatId),
       env.DB.prepare("UPDATE outreach_prospects SET followup_due_at=NULL, status=CASE WHEN status IN ('sent','followup_stopped','followup_sending') THEN 'followup_stopped' ELSE status END, updated_at=? WHERE campaign_id=?").bind(now, campaign.id)
     ]);
     await sendText(env, chatId, "✅ Campaign closed. No new emails or follow-ups will be sent. Reply checks for already-sent messages may continue for up to 30 days.");
@@ -1056,7 +1056,7 @@ async function handleOutreachCommand(env, chatId, raw) {
         ". You can retry /outreach draft " + id + " after the issue is fixed.");
       return;
     }
-    await env.DB.prepare("UPDATE outreach_prospects SET draft_subject=?, draft_body=?, status='draft_ready', updated_at=? WHERE id=? AND chat_id=? AND status IN ('new','draft_ready')")
+    await env.DB.prepare("UPDATE outreach_prospects SET draft_subject=?, draft_body=?, guardian_reviewed_at=NULL, guardian_reviewed_by=NULL, status='draft_ready', updated_at=? WHERE id=? AND chat_id=? AND status IN ('new','draft_ready')")
       .bind(subject, body, new Date().toISOString(), id, chatId).run();
     await sendText(env, chatId, "✉️ EMAIL PREVIEW — PROSPECT #" + id +
       "\nTo: " + prospect.email + "\nCompany: " + (prospect.company || "(not set)") +
@@ -1136,7 +1136,7 @@ async function handleOutreachCommand(env, chatId, raw) {
     const now = new Date().toISOString();
     await env.DB.prepare("INSERT OR IGNORE INTO outreach_suppressions (chat_id,email,reason,created_at) VALUES (?,?,'manual_optout',?)")
       .bind(chatId,email,now).run();
-    await env.DB.prepare("UPDATE outreach_prospects SET status='opted_out', followup_due_at=NULL, updated_at=? WHERE chat_id=? AND email=? AND status NOT IN ('replied','closed_no_reply')")
+    await env.DB.prepare("UPDATE outreach_prospects SET status='opted_out', contact_permission_status='opted_out', followup_due_at=NULL, updated_at=? WHERE chat_id=? AND email=? AND status NOT IN ('replied','closed_no_reply')")
       .bind(now,chatId,email).run();
     await sendText(env, chatId, "🛑 " + email + " was added to your suppression list. JARVIS will not send further outreach to this address.");
     return;
