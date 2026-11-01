@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import {
   buildSalesMarketMessages,
   parseSalesMarketResult,
-  renderSalesMarketPlan
+  renderSalesMarketPlan,
+  inferNAICSSectorsFromProduct
 } from "../src/sales-market.mjs";
 
 test("market plan derives its target market from the saved product profile", () => {
@@ -60,6 +61,38 @@ test("NAICS mappings are restricted to recognized 2-digit sectors", () => {
   }));
   assert.equal(parsed.ok, true);
   assert.deepEqual(parsed.plan.naics_sectors.map(item => item.code), ["23"]);
+});
+
+test("normalizes detailed NAICS codes to valid sector prefixes and removes duplicates", () => {
+  const parsed = parseSalesMarketResult(JSON.stringify({
+    ideal_customer_profile: "US construction businesses.",
+    segments: [{
+      name: "General contractors",
+      why_fit: "They manage projects.",
+      buyer_roles: ["Owner"],
+      search_queries: ["general contractors USA official company websites"]
+    }],
+    naics_sectors: [
+      { code: "23", name: "Construction", reason: "Direct industry fit." },
+      { code: "236220", name: "Commercial and institutional building construction", reason: "Detailed match." }
+    ],
+    exclusions: [],
+    caveats: ""
+  }));
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.plan.naics_sectors.map(item => item.code), ["23"]);
+});
+
+test("infers the construction NAICS sector from the Contractor Profit Control Center profile", () => {
+  const sectors = inferNAICSSectorsFromProduct({
+    product_name: "Contractor Profit Control Center",
+    category: "Construction project financial management",
+    summary: "A workbook for general contractors to monitor job budgets and project costs.",
+    target_customer_types: ["Small and mid-sized general contractors", "Specialty trade contractors"]
+  });
+  assert.equal(sectors.length, 1);
+  assert.equal(sectors[0].code, "23");
+  assert.equal(sectors[0].name, "Construction");
 });
 
 test("market plan output provides search links and explains that results were not fetched", () => {
