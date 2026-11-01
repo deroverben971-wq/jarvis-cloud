@@ -3,6 +3,7 @@ import { validateSalesDocument } from "./sales-documents.mjs";
 import { buildProductAnalysisMessages, getSalesExtractionMode, MAX_PLAIN_TEXT_BYTES, normalizeExtractedText, parseProductProfile } from "./sales-analysis.mjs";
 import { buildSalesResearchMessages, discoverResearchPages, extractResearchPage, MAX_RESEARCH_PAGE_BYTES, MAX_RESEARCH_PAGES, parseSalesResearchResult, validateResearchRequest } from "./sales-research.mjs";
 import { buildSalesScriptMessages, parseSalesScriptResult, renderSalesScript } from "./sales-scripts.mjs";
+import { buildSalesMarketMessages, parseSalesMarketResult, renderSalesMarketPlan } from "./sales-market.mjs";
 
 const HELP = [
   "🤖 JARVIS CLOUD — PHASE 2",
@@ -32,7 +33,9 @@ const HELP = [
   "/sales file ID — show one received document",
   "/sales product ID — show the saved product analysis",
   "/sales analyze ID — queue or retry product analysis",
+      "/sales market ID — build a product-led USA target-market plan and Google search links",
   "/sales research PRODUCT_FILE_ID | Prospect Name | https://official-site.example — compare a prospect with a product's target market",
+  "/sales market PRODUCT_FILE_ID — infer the product USA target market and create free Google search links",
   "/sales research list — list product-linked prospect research",
   "/sales research ID — view a research report",
   "/sales prospect RESEARCH_ID | email | contact — add a researched public inbox to a campaign",
@@ -1910,6 +1913,83 @@ async function handleSalesCommand(env, chatId, raw) {
 
 
 
+
+  const marketMatch = /^market\s+(\d+)$/i.exec(rest);
+  if (marketMatch) {
+    const productId = Number(marketMatch[1]);
+    const product = await env.DB.prepare(
+      "SELECT d.id,d.file_name,d.status,a.product_profile_json FROM sales_documents d " +
+      "JOIN sales_document_analysis a ON a.document_id=d.id WHERE d.id=? AND d.chat_id=?"
+    ).bind(productId, chatId).first();
+    if (!product || product.status !== "analyzed" || !product.product_profile_json) {
+      await sendText(env, chatId,
+        "Sales file #" + productId + " must have a completed product analysis first. " +
+        "Use /sales product " + productId + " to check it. No market plan was generated.");
+      return;
+    }
+    if (!env.AI) {
+      await sendText(env, chatId, "The Cloudflare AI binding is not available, so I couldn't build the product-market plan.");
+      return;
+    }
+    try {
+      let productProfile;
+      try { productProfile = JSON.parse(product.product_profile_json || "{}"); }
+      catch { throw new Error("The saved product profile could not be read."); }
+      const output = await env.AI.run(CLOUD_AI_MODEL, {
+        messages: buildSalesMarketMessages(productProfile),
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "jarvis_product_market_plan",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                ideal_customer_profile: { type: "string" },
+                segments: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      name: { type: "string" },
+                      why_fit: { type: "string" },
+                      buyer_roles: { type: "array", items: { type: "string" } },
+                      search_queries: { type: "array", items: { type: "string" } }
+                    },
+                    required: ["name", "why_fit", "buyer_roles", "search_queries"],
+                    additionalProperties: false
+                  }
+                },
+                exclusions: { type: "array", items: { type: "string" } },
+                caveats: { type: "string" }
+              },
+              required: ["ideal_customer_profile", "segments", "exclusions", "caveats"],
+              additionalProperties: false
+            }
+          }
+        },
+        max_completion_tokens: 1200,
+        reasoning_effort: "low",
+        chat_template_kwargs: { enable_thinking: false },
+        temperature: 0.2
+      });
+      const parsed = parseSalesMarketResult(extractAIText(output));
+      if (!parsed.ok) throw new Error(parsed.error);
+      await sendText(env, chatId, renderSalesMarketPlan(productProfile.product_name || product.file_name, parsed.plan));
+    } catch (error) {
+      console.error("Sales market plan failed:", error?.message || "unknown error");
+      await sendText(env, chatId,
+        "I couldn't generate the target-market plan. Reason: " +
+        String(error?.message || "unknown error").replace(/[\r\n\t]/g, " ").slice(0, 180) +
+        "\nNo prospects were added and no email was sent.");
+    }
+    return;
+  }
+
+  if (/^market$/i.test(rest)) {
+    await sendText(env, chatId, "Use /sales market PRODUCT_FILE_ID after the product document has been analyzed. This generates a product-led USA target-market plan and Google search links; it does not automatically fetch search results.");
+    return;
+  }
 
   const salesProspectMatch = /^prospect\s+([\s\S]+)$/i.exec(rest);
   if (salesProspectMatch) {
