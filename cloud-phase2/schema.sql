@@ -124,9 +124,6 @@ CREATE TABLE IF NOT EXISTS outreach_campaigns (
   sender_email TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'setup',
   setup_step TEXT,
-  guardian_approved_at TEXT,
-  guardian_approved_by TEXT,
-  auto_send_enabled INTEGER NOT NULL DEFAULT 0 CHECK (auto_send_enabled IN (0,1)),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -142,12 +139,6 @@ CREATE TABLE IF NOT EXISTS outreach_prospects (
   contact_name TEXT NOT NULL DEFAULT '',
   company TEXT NOT NULL DEFAULT '',
   relevance_context TEXT NOT NULL DEFAULT '',
-  contact_permission_status TEXT NOT NULL DEFAULT 'unverified'
-    CHECK (contact_permission_status IN ('unverified','documented_opt_in','not_authorized','opted_out')),
-  permission_source TEXT,
-  permission_verified_at TEXT,
-  guardian_reviewed_at TEXT,
-  guardian_reviewed_by TEXT,
   status TEXT NOT NULL DEFAULT 'new',
   draft_subject TEXT,
   draft_body TEXT,
@@ -169,8 +160,6 @@ CREATE INDEX IF NOT EXISTS idx_outreach_prospects_status_due
   ON outreach_prospects (status, followup_due_at);
 CREATE INDEX IF NOT EXISTS idx_outreach_prospects_chat_status
   ON outreach_prospects (chat_id, status, id);
-CREATE INDEX IF NOT EXISTS idx_outreach_prospects_permission
-  ON outreach_prospects (chat_id, contact_permission_status, guardian_reviewed_at, status);
 
 -- Email suppression list applies across campaigns for this Telegram user.
 CREATE TABLE IF NOT EXISTS outreach_suppressions (
