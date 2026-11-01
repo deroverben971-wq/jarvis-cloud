@@ -77,7 +77,10 @@ export function extractResearchPage(html, pageUrl, companyHostname) {
       links.push({ url: target.toString(), label: getAttribute(linkMatch[0], "aria-label") });
     } catch { /* ignore invalid or off-site links */ }
   }
-  const emailMatches = source\n    .replace(/<(script|style|svg|noscript|iframe|form|nav|footer)\\b[^>]*>[\\s\\S]*?<\\/\\1\\s*>/gi, " ")\n    .match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
+  const emailSource = source
+    .replace(/<(script|style|svg|noscript|iframe|form|nav|footer)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ");
+  const emailMatches = emailSource.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || [];
   const emails = [...new Set(emailMatches.map(value => value.toLowerCase()))]
     .filter(email => {
       const parts = email.split("@");
