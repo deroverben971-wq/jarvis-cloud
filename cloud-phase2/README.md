@@ -174,6 +174,20 @@ The generated market plan is a hypothesis based on the uploaded product document
 
 A card-free general-purpose web search API with a permitted server-side free quota is not configured for this deployment. Brave Search currently advertises $5 in monthly Search credits (about 1,000 requests), but activating the plan requires payment details and a card verification hold, so it is excluded from this strict no-card setup. Do not replace this mode with scraping search-result pages or overloading public community data services. A future fully automatic discovery phase needs an adult-managed, documented, permitted source with a genuinely free quota; until then, this feature only generates targeted searches. See https://brave.com/search/api/ and https://api-dashboard.search.brave.com/documentation/resources/help-feedback.
 
+## Sales Intelligence — free USA federal-contractor discovery
+
+The new /sales discover PRODUCT_FILE_ID command derives the product's US target-market segments and valid 2-digit NAICS sector prefixes from its analyzed product profile, then queries the public USAspending V2 spending_by_award endpoint. The API does not require authorization. JARVIS requests a small sample of domestic business recipients of federal contracts in the last four years and deduplicates recipients and award records before showing up to 12 organizations.
+
+The report includes organization names, public recipient locations where supplied, award dates, award descriptions, award identifiers, official USAspending award links, and a Google query to help the user locate the organization's official website. It does not collect named personal contacts, email addresses, or phone numbers. It does not add discovered organizations to an outreach campaign and never sends email.
+
+**Coverage limitation:** this source contains businesses recorded as recipients of US federal contract awards in the selected NAICS sectors. It is not a directory of every US contractor, does not reliably represent small-business status, and may overrepresent government contractors and larger firms. An award is not proof that a company needs the product or wants to buy it. Award amounts are not company revenue. The four-year date window and limited first-page sample are intended for initial research only, not exhaustive market sizing.
+
+No new D1 table, migration, secret, external API key, paid subscription, or payment method is required. Requests occur only when /sales discover ID is manually run; the minute Cron Trigger does not run market discovery automatically. Respect USAspending service availability and do not repeatedly retry failed requests.
+
+After reviewing an organization's official website, use /sales research PRODUCT_FILE_ID | Organization name | https://official-site.example for the existing product-fit analysis. Existing documented opt-in and parent/guardian review requirements remain mandatory before any marketing email. Public contact information does not establish consent.
+
+API documentation: https://api.usaspending.gov/docs/endpoints and https://github.com/fedspendingtransparency/usaspending-api/blob/master/usaspending_api/api_contracts/contracts/v2/search/spending_by_award.md
+
 ## Gmail outreach (approval-first, low volume)
 
 The separate Apps Script connector in `gmail-outreach-apps-script.js` uses Gmail Advanced Service with the narrow `gmail.send` and `gmail.metadata` scopes. It sends only after `/outreach send ID`, checks reply headers only, and never forwards email bodies to Telegram. Configure Script Property `JARVIS_GMAIL_SHARED_SECRET`; set Cloudflare Worker variable `GMAIL_WEBAPP_URL` and secret `GMAIL_SHARED_SECRET`. Deploy this separate Apps Script Web App before using `/outreach start`.
