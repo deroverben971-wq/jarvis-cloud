@@ -96,6 +96,7 @@ test("limits result count and safely handles malformed rows", async () => {
         null,
         { name: "Missing website" },
         { name: "Bad scheme", website: "javascript:alert(1)" },
+        { name: "Userinfo URL", website: "https://user:pass@unsafe.example" },
         { name: "Only builder", website: "https://builder-one.example" },
         { name: "Second builder", website: "https://builder-two.example" }
       ]
