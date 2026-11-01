@@ -1,4 +1,5 @@
 import { isReminderRequest, manilaInputToUtc, parseReminderRequest } from "./reminder-parser.mjs";
+import { validateSalesDocument } from "./sales-documents.mjs";
 
 const HELP = [
   "🤖 JARVIS CLOUD — PHASE 2",
@@ -21,6 +22,13 @@ const HELP = [
   "/deleteevent title — find matching events and request confirmation before deleting",
   "/confirmdelete CODE — delete the exact event after checking its details",
   "/canceldelete CODE — cancel a pending deletion confirmation",
+  "",
+  "SALES INTELLIGENCE — PHASE 1 DOCUMENT INTAKE",
+  "/sales — show Sales Intelligence commands",
+  "/sales files — list received product documents",
+  "/sales file ID — show one received document",
+  "Send a PDF, DOCX, PPTX, TXT, MD, or CSV as a Telegram document (not as a photo).",
+  "This first intake step stores the file reference and metadata; product extraction is a later phase.",
   "",
   "EMAIL OUTREACH",
   "/outreach — show campaign status and commands",
@@ -1188,6 +1196,149 @@ async function processOutreachScheduled(env, scheduledTime) {
   }
 }
 
+async function handleSalesDocument(env, message) {
+  const chatId = String(message.chat?.id ?? "");
+  if (!chatId || chatId !== String(env.TELEGRAM_CHAT_ID)) return;
+
+  const checked = validateSalesDocument(message.document, message.caption || "");
+  if (!checked.ok) {
+    await sendText(env, chatId, "📄 I couldn't accept that product document. " + checked.error);
+    return;
+  }
+
+  const item = checked.document;
+  const existing = await env.DB.prepare(
+    "SELECT id, file_name, status FROM sales_documents WHERE chat_id=? AND telegram_file_unique_id=?"
+  ).bind(chatId, item.fileUniqueId).first();
+
+  if (existing) {
+    await sendText(env, chatId,
+      "📁 This document is already registered as Sales file #" + existing.id +
+      ".\nFile: " + existing.file_name +
+      "\nStatus: " + existing.status +
+      "\nNo duplicate record was created.");
+    return;
+  }
+
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    "INSERT OR IGNORE INTO sales_documents (chat_id, telegram_file_id, telegram_file_unique_id, file_name, mime_type, file_size_bytes, caption, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'received', ?, ?)"
+  ).bind(
+    chatId,
+    item.fileId,
+    item.fileUniqueId,
+    item.fileName,
+    item.mimeType,
+    item.fileSizeBytes,
+    item.caption,
+    now,
+    now
+  ).run();
+
+  const saved = await env.DB.prepare(
+    "SELECT id, file_name, status FROM sales_documents WHERE chat_id=? AND telegram_file_unique_id=?"
+  ).bind(chatId, item.fileUniqueId).first();
+
+  if (!saved) {
+    await sendText(env, chatId, "⚠️ I received the document but couldn't confirm its saved record. No email was sent.");
+    return;
+  }
+
+  const sizeLabel = item.fileSizeBytes === null
+    ? "Size not supplied by Telegram"
+    : (item.fileSizeBytes / 1024 / 1024).toFixed(2) + " MB";
+
+  await sendText(env, chatId,
+    "📁 PRODUCT DOCUMENT RECEIVED\n\n" +
+    "Sales file: #" + saved.id +
+    "\nFile: " + saved.file_name +
+    "\nSize: " + sizeLabel +
+    "\nStatus: RECEIVED" +
+    (item.caption ? "\nYour note: " + item.caption : "") +
+    "\n\nThe private Telegram file reference and metadata are saved. Document text extraction and product analysis are the next development phase; this upload has not started research or sent any email.\n\nUse /sales files to see your uploaded documents.");
+}
+
+function formatDocumentSize(bytes) {
+  const size = Number(bytes);
+  if (!Number.isFinite(size) || size < 0) return "Unknown size";
+  if (size < 1024) return size + " B";
+  if (size < 1024 * 1024) return (size / 1024).toFixed(1) + " KB";
+  return (size / 1024 / 1024).toFixed(2) + " MB";
+}
+
+async function handleSalesCommand(env, chatId, raw) {
+  const rest = raw.replace(/^\/sales(?:@\\w+)?/i, "").trim();
+  const lower = rest.toLowerCase();
+
+  if (!lower || lower === "help") {
+    await sendText(env, chatId, [
+      "🧠 JARVIS SALES INTELLIGENCE — PHASE 1",
+      "",
+      "Upload a product document in this Telegram chat using the attachment button → File.",
+      "Accepted: PDF, DOCX, PPTX, TXT, MD, and CSV (maximum 20 MB).",
+      "",
+      "/sales files — list received product documents",
+      "/sales file ID — inspect one document record",
+      "/sales status — show intake totals",
+      "",
+      "Current phase: secure document intake and metadata storage. Product extraction, deep research, scripts, and campaign automation are not enabled yet.",
+      "No emails are sent by Sales Intelligence in this phase."
+    ].join("\n"));
+    return;
+  }
+
+  if (lower === "files" || lower === "list") {
+    const rows = await env.DB.prepare(
+      "SELECT id, file_name, file_size_bytes, status, created_at FROM sales_documents WHERE chat_id=? ORDER BY id DESC LIMIT 10"
+    ).bind(chatId).all();
+    const files = rows.results || [];
+    await sendText(env, chatId, files.length
+      ? "📁 RECEIVED PRODUCT DOCUMENTS\n\n" + files.map(file =>
+        "#" + file.id + " · " + file.file_name +
+        "\n" + formatDocumentSize(file.file_size_bytes) + " · " + file.status +
+        "\nReceived: " + file.created_at
+      ).join("\n\n")
+      : "No product documents received yet. Send one using the Telegram attachment button → File.");
+    return;
+  }
+
+  if (lower === "status") {
+    const row = await env.DB.prepare(
+      "SELECT COUNT(*) AS total FROM sales_documents WHERE chat_id=?"
+    ).bind(chatId).first();
+    await sendText(env, chatId,
+      "🧠 SALES INTELLIGENCE STATUS\n" +
+      "Document intake: ✅ enabled\n" +
+      "Documents registered: " + Number(row?.total || 0) +
+      "\nProduct extraction: not enabled yet\nBusiness research: not enabled yet\nEmail automation: not enabled in Sales Intelligence.");
+    return;
+  }
+
+  const match = /^file\\s+(\\d+)$/i.exec(rest);
+  if (match) {
+    const id = Number(match[1]);
+    const file = await env.DB.prepare(
+      "SELECT id, file_name, mime_type, file_size_bytes, caption, status, created_at, updated_at FROM sales_documents WHERE id=? AND chat_id=?"
+    ).bind(id, chatId).first();
+    if (!file) {
+      await sendText(env, chatId, "I couldn't find Sales file #" + id + ".");
+      return;
+    }
+    await sendText(env, chatId,
+      "📄 SALES DOCUMENT #" + file.id +
+      "\nFile: " + file.file_name +
+      "\nType: " + file.mime_type +
+      "\nSize: " + formatDocumentSize(file.file_size_bytes) +
+      "\nStatus: " + file.status +
+      "\nReceived: " + file.created_at +
+      (file.caption ? "\nNote: " + file.caption : "") +
+      "\n\nThe content has not been extracted or analyzed yet.");
+    return;
+  }
+
+  await sendText(env, chatId, "Use /sales, /sales files, /sales file ID, or /sales status.");
+}
+
 function isCloudCommand(message) {
   const text = (message.text || "").trim().toLowerCase();
   return isReminderRequest(text) || text === "/status" || text === "/start" || text === "/help" || text === "help" ||
@@ -1199,6 +1350,7 @@ function isCloudCommand(message) {
     text === "/confirmdelete" || text.startsWith("/confirmdelete ") ||
     text === "/canceldelete" || text.startsWith("/canceldelete ") ||
     text === "/food" || text.startsWith("/food ") ||
+    text === "/sales" || text.startsWith("/sales ") ||
     text === "/outreach" || text.startsWith("/outreach ") ||
     text === "/alarm" || text.startsWith("/alarm ") ||
     text === "/callme" || text.startsWith("/callme ") ||
@@ -1239,6 +1391,10 @@ async function handleMessage(env, message) {
 
   if (text === "/food" || text.startsWith("/food ")) {
     await sendText(env, chatId, "🍽️ The food-order feature is intentionally disabled in this JARVIS deployment. No order was placed.");
+    return;
+  }
+  if (text === "/sales" || text.startsWith("/sales ")) {
+    await handleSalesCommand(env, chatId, raw);
     return;
   }
   if (text === "/outreach" || text.startsWith("/outreach ")) {
@@ -1651,21 +1807,25 @@ export default {
           .bind(update.update_id).first();
         if (seen) return json({ ok: true, duplicate: true });
       }
-      if (update.message && update.message.text) {
+      if (update.message) {
         const message = update.message;
         if (String(message.chat?.id ?? "") !== String(env.TELEGRAM_CHAT_ID)) {
           // Ignore messages from chats that are not explicitly authorized.
-        } else if (isCloudCommand(message)) {
-          await handleMessage(env, message);
-        } else {
-          const pendingOutreach = await env.DB.prepare("SELECT * FROM outreach_campaigns WHERE chat_id = ? AND status = 'setup' ORDER BY id DESC LIMIT 1")
-            .bind(String(message.chat?.id ?? "")).first();
-          if (pendingOutreach) {
-            await handleOutreachSetupInput(env, message, pendingOutreach);
-          } else if (env.AI) {
-            await handleCloudChat(env, message, update.update_id);
+        } else if (message.document) {
+          await handleSalesDocument(env, message);
+        } else if (message.text) {
+          if (isCloudCommand(message)) {
+            await handleMessage(env, message);
           } else {
-            await enqueueForLocalJarvis(env, message, update.update_id);
+            const pendingOutreach = await env.DB.prepare("SELECT * FROM outreach_campaigns WHERE chat_id = ? AND status = 'setup' ORDER BY id DESC LIMIT 1")
+              .bind(String(message.chat?.id ?? "")).first();
+            if (pendingOutreach) {
+              await handleOutreachSetupInput(env, message, pendingOutreach);
+            } else if (env.AI) {
+              await handleCloudChat(env, message, update.update_id);
+            } else {
+              await enqueueForLocalJarvis(env, message, update.update_id);
+            }
           }
         }
       }
