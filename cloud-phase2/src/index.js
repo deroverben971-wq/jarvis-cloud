@@ -5,6 +5,7 @@ import { buildSalesResearchMessages, discoverResearchPages, extractResearchPage,
 import { buildSalesScriptMessages, parseSalesScriptResult, renderSalesScript } from "./sales-scripts.mjs";
 import { buildSalesMarketMessages, parseSalesMarketResult, renderSalesMarketPlan, inferNAICSSectorsFromProduct } from "./sales-market.mjs";
 import { searchFederalAwardRecipients, renderFederalAwardCandidates } from "./sales-discovery.mjs";
+import { searchUSConstructionCompanies } from "./sales-hunt.mjs";
 
 const HELP = [
   "🤖 JARVIS CLOUD — PHASE 2",
@@ -37,6 +38,7 @@ const HELP = [
   "/sales research PRODUCT_FILE_ID | Prospect Name | https://official-site.example — compare a prospect with a product's target market",
   "/sales market PRODUCT_FILE_ID — infer the product USA target market and create free Google search links",
   "/sales discover PRODUCT_FILE_ID — find relevant US federal contract recipient organizations from public award data",
+  "/sales hunt PRODUCT_FILE_ID — discover US construction companies and queue official-site research",
   "/sales research list — list product-linked prospect research",
   "/sales research ID — view a research report",
   "/sales prospect RESEARCH_ID | email | contact — add a researched public inbox to a campaign",
@@ -1969,6 +1971,7 @@ async function handleSalesCommand(env, chatId, raw) {
       "/sales analyze ID — queue or retry a failed analysis",
       "/sales market ID — build a product-led USA target-market plan and Google search links",
       "/sales discover ID — discover US federal contractor organizations using the analyzed product market",
+      "/sales hunt ID — find up to three US construction companies and queue official-site research",
       "/sales status — show analysis totals",
       "/sales script ID — generate or refresh a sales script from an analyzed product",
       "/sales script show ID — view the saved sales script",
@@ -1982,6 +1985,129 @@ async function handleSalesCommand(env, chatId, raw) {
 
 
 
+
+  const huntMatch = /^hunt\\s+(\\d+)$/i.exec(rest);
+  if (huntMatch) {
+    const productId = Number(huntMatch[1]);
+    const product = await env.DB.prepare(
+      "SELECT d.id,d.file_name,d.status,a.product_profile_json FROM sales_documents d " +
+      "JOIN sales_document_analysis a ON a.document_id=d.id WHERE d.id=? AND d.chat_id=?"
+    ).bind(productId, chatId).first();
+    if (!product || product.status !== "analyzed" || !product.product_profile_json) {
+      await sendText(env, chatId,
+        "Sales file #" + productId + " must have a completed product analysis first. " +
+        "Use /sales product " + productId + " to check it. No company search was performed.");
+      return;
+    }
+
+    const active = await env.DB.prepare(
+      "SELECT COUNT(*) AS total FROM sales_research WHERE chat_id=? AND status IN ('pending','researching')"
+    ).bind(chatId).first();
+    const activeCount = Number(active?.total || 0);
+    const slots = Math.max(0, 3 - activeCount);
+    if (!slots) {
+      await sendText(env, chatId,
+        "You already have three prospect research jobs queued or running. Check /sales research list before starting another hunt.");
+      return;
+    }
+
+    try {
+      const productProfile = JSON.parse(product.product_profile_json || "{}");
+      const plan = await generateProductMarketPlan(env, productProfile);
+      const constructionMapped = Array.isArray(plan.naics_sectors) &&
+        plan.naics_sectors.some(item => String(item.code) === "23");
+      if (!constructionMapped) {
+        await sendText(env, chatId,
+          "This first automated directory hunt currently supports products mapped to NAICS 23 — Construction. " +
+          "JARVIS did not guess a sector or queue any companies. Review /sales market " + productId + " first.");
+        return;
+      }
+
+      await sendText(env, chatId,
+        "🔎 Searching the free public US construction-company directory. " +
+        "I will queue up to " + Math.min(3, slots) +
+        " official websites for product-fit research. Personal Gmail addresses are not collected.");
+      const directory = await searchUSConstructionCompanies({ limit: 10 });
+      if (!directory.ok) {
+        await sendText(env, chatId,
+          "⚠️ The company directory search could not be completed. " + directory.error +
+          "\\nNo company research was queued and no email was sent.");
+        return;
+      }
+
+      const queued = [];
+      const skipped = [];
+      for (const candidate of directory.candidates) {
+        if (queued.length >= slots || queued.length >= 3) break;
+        const duplicate = await env.DB.prepare(
+          "SELECT id,status FROM sales_research WHERE chat_id=? AND product_document_id=? " +
+          "AND (LOWER(website_url)=LOWER(?) OR LOWER(website_url) LIKE ? ) ORDER BY id DESC LIMIT 1"
+        ).bind(
+          chatId, productId, candidate.websiteUrl,
+          "%://" + candidate.hostname + "/%"
+        ).first();
+        if (duplicate) {
+          skipped.push(candidate.name);
+          continue;
+        }
+        const now = new Date().toISOString();
+        const saved = await env.DB.prepare(
+          "INSERT INTO sales_research (chat_id, product_document_id, prospect_name, website_url, status, created_at, updated_at) " +
+          "VALUES (?, ?, ?, ?, 'pending', ?, ?)"
+        ).bind(chatId, productId, candidate.name, candidate.websiteUrl, now, now).run();
+        if (saved.meta?.last_row_id) queued.push({ id: saved.meta.last_row_id, ...candidate });
+      }
+
+      if (!queued.length) {
+        await sendText(env, chatId,
+          directory.candidates.length
+            ? "The directory returned company records, but all available results were already in your research history or no new valid official websites remained. Check /sales research list. No email was sent."
+            : "The public directory returned no construction-company records with usable websites for this query. This does not prove that no matching US companies exist. No email was sent.");
+        return;
+      }
+
+      const lines = [
+        "🏗️ JARVIS US CONSTRUCTION PROSPECT HUNT",
+        "Product: " + String(productProfile.product_name || product.file_name).slice(0, 140),
+        "Source: companies.directory public US company directory",
+        "New official websites queued: " + queued.length,
+        "",
+        "QUEUED FOR PRODUCT-FIT + OFFICIAL-SITE CONTACT RESEARCH"
+      ];
+      for (const item of queued) {
+        lines.push(
+          "",
+          "#" + item.id + " · " + item.name,
+          "Location: " + (item.location || "Not supplied"),
+          "Website: " + item.websiteUrl
+        );
+      }
+      lines.push(
+        "",
+        "JARVIS will process these using the existing research queue (normally one job per minute). It checks each official site and up to two relevant same-site pages, then reports only generic role inboxes published on that same domain (for example info@ or sales@).",
+        "Personal Gmail addresses and named personal email addresses are not collected. Directory-provided email/phone fields are ignored. Public contact details are not permission to market.",
+        "",
+        "Check progress: /sales research list",
+        "No campaign prospects were added. No email was sent.",
+        "Directory data can be incomplete or outdated; verify each organization and website."
+      );
+      if (skipped.length) lines.push("Already researched and skipped: " + skipped.slice(0, 5).join(", "));
+      await sendText(env, chatId, lines.join("\\n"));
+    } catch (error) {
+      console.error("Sales prospect hunt failed:", error?.message || "unknown error");
+      await sendText(env, chatId,
+        "⚠️ JARVIS could not complete the company hunt. Reason: " +
+        String(error?.message || "unknown error").replace(/[\\r\\n\\t]/g, " ").slice(0, 180) +
+        "\\nNo email was sent.");
+    }
+    return;
+  }
+
+  if (/^hunt$/i.test(rest)) {
+    await sendText(env, chatId,
+      "Use /sales hunt PRODUCT_FILE_ID after analyzing your product document. The current automatic directory hunt supports US construction businesses (NAICS 23). It queues up to three company websites for product-fit research and looks only for generic role-based inboxes published on those official domains. It never gathers personal Gmail addresses or sends email.");
+    return;
+  }
 
   const discoverMatch = /^discover\s+(\d+)$/i.exec(rest);
   if (discoverMatch) {
