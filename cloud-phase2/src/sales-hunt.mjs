@@ -110,7 +110,7 @@ export async function searchUSConstructionCompanies(options = {}) {
     if (!name || !website) continue;
     const checked = validateResearchRequest(name, website);
     if (!checked.ok || isBlockedHost(checked.hostname)) continue;
-    const hostname = checked.hostname.replace(/^www\\./i, "");
+    const hostname = checked.hostname.replace(/^www\./i, "");
     if (seen.has(hostname)) continue;
     seen.add(hostname);
     const locality = clean(row.locality, 80);
