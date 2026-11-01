@@ -31,6 +31,9 @@ const HELP = [
   "/sales file ID — show one received document",
   "/sales product ID — show the saved product analysis",
   "/sales analyze ID — queue or retry product analysis",
+  "/sales research Company | https://official-site.example — research an official company website",
+  "/sales research list — list recent company research",
+  "/sales research ID — view a research report",
   "Upload PDF, DOCX, XLSX, CSV, TXT, or MD as a Telegram document (not as a photo).",
   "",
   "EMAIL OUTREACH",
@@ -39,7 +42,11 @@ const HELP = [
   "/outreach add email | contact | company | why relevant — add one business prospect",
   "/outreach prospects — list prospects",
   "/outreach draft ID — generate and preview an email",
-  "/outreach send ID — send the exact preview you approved",
+  "/outreach send ID — send after documented opt-in and guardian review",
+  "/outreach permission ID | evidence — record explicit recipient opt-in",
+  "/outreach guardian-approve CAMPAIGN_ID | adult name — record campaign review",
+  "/outreach guardian-review ID | adult name — review an exact draft",
+  "/outreach auto-on or /outreach auto-off — control pre-reviewed opt-in drafts",
   "/outreach pause or /outreach resume — control follow-ups",
   "/outreach optout EMAIL — suppress an address from future outreach",
   "",
@@ -781,7 +788,10 @@ async function handleOutreachCommand(env, chatId, raw) {
     const counts = await env.DB.prepare("SELECT status, COUNT(*) AS n FROM outreach_prospects WHERE campaign_id=? GROUP BY status").bind(campaign.id).all();
     await sendText(env, chatId, "📨 CAMPAIGN #" + campaign.id + "\nStatus: " + campaign.status +
       "\nPitch: " + String(campaign.product || "").slice(0, 200) +
-      "\nSender: " + campaign.sender_email + "\n\nProspects:\n" +
+      "\nSender: " + campaign.sender_email +
+      "\nParent/guardian campaign review: " + (campaign.guardian_approved_at ? "recorded (" + campaign.guardian_approved_by + ")" : "not recorded") +
+      "\nAutomatic sending: " + (campaign.auto_send_enabled ? "ON" : "OFF") +
+      "\n\nProspects:\n" +
       ((counts.results || []).map(r => r.status + ": " + r.n).join("\n") || "No prospects yet."));
     return;
   }
@@ -891,11 +901,14 @@ async function handleOutreachCommand(env, chatId, raw) {
   }
   if (lower === "prospects" || lower === "list") {
     if (!campaign || campaign.status === "setup") { await sendText(env, chatId, "Finish campaign setup first."); return; }
-    const rows = await env.DB.prepare("SELECT id,email,contact_name,company,status,followup_due_at FROM outreach_prospects WHERE campaign_id=? ORDER BY id DESC LIMIT 25")
+    const rows = await env.DB.prepare("SELECT id,email,contact_name,company,status,followup_due_at,contact_permission_status,guardian_reviewed_at FROM outreach_prospects WHERE campaign_id=? ORDER BY id DESC LIMIT 25")
       .bind(campaign.id).all();
     await sendText(env, chatId, (rows.results || []).length
       ? "📋 OUTREACH PROSPECTS\n\n" + rows.results.map(p => "#" + p.id + " · " + (p.contact_name || p.company || p.email) +
-        "\n" + p.email + " · " + p.status + (p.followup_due_at ? "\nFollow-up due: " + p.followup_due_at : "")).join("\n\n")
+        "\n" + p.email + " · " + p.status +
+        "\nPermission: " + p.contact_permission_status +
+        " · Guardian draft review: " + (p.guardian_reviewed_at ? "yes" : "no") +
+        (p.followup_due_at ? "\nFollow-up due: " + p.followup_due_at : "")).join("\n\n")
       : "No prospects yet. Add one with:\n/outreach add email@business.com | Name | Company | Why relevant");
     return;
   }
@@ -2563,10 +2576,13 @@ export default {
 
     try {
       await processSalesDocumentQueue(env);
-      await processSalesResearchQueue(env);
     } catch (error) {
       console.error("Sales document queue processing failed:", error?.message || "unknown");
-      try { await processSalesResearchQueue(env); } catch (error) { console.error("Sales research queue processing failed:", error?.message || "unknown"); }
+    }
+    try {
+      await processSalesResearchQueue(env);
+    } catch (error) {
+      console.error("Sales research queue processing failed:", error?.message || "unknown");
     }
   }
 };
