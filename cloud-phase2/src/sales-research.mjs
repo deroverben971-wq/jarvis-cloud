@@ -53,8 +53,8 @@ function decodeHtml(value) {
 }
 
 function getAttribute(tag, name) {
-  const match = new RegExp("\\b" + name + "\\s*=\\s*(?:\\"([^\\"]*)\\"|'([^']*)'|([^\\s>]+))", "i").exec(tag);
-  return match ? decodeHtml(match[1] || match[2] || match[3] || "") : "";
+  const match = new RegExp("\\b" + name + "\\s*=\\s*([^\\s>]+)", "i").exec(tag);
+  return match ? decodeHtml(match[1].split('"').join("").split("'").join("")) : "";
 }
 
 export function extractResearchPage(html, pageUrl, companyHostname) {
