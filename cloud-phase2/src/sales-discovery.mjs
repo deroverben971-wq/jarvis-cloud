@@ -88,7 +88,7 @@ export async function searchFederalAwardRecipients(sectors, options = {}) {
           order: "desc",
           filters: {
             recipient_scope: "domestic",
-            recipient_type_names: ["category_business"],
+            recipient_type_names: ["category_business", "sole_proprietorship"],
             award_type_codes: ["A", "B", "C", "D"],
             time_period: [{ start_date: startDate, end_date: endDate }],
             naics_codes: { require: [sector.code] }
@@ -115,7 +115,7 @@ export async function searchFederalAwardRecipients(sectors, options = {}) {
       continue;
     }
     if (!response.ok) {
-      sectorErrors.push(sector.code + ": USAspending returned HTTP " + response.status);
+      sectorErrors.push(sector.code + ": USAspending returned HTTP " + response.status + (response.status === 429 ? " (rate limited; try again later)" : ""));
       continue;
     }
     let payload;
