@@ -1259,6 +1259,7 @@ async function handleSalesDocument(env, message) {
 }
 
 function formatDocumentSize(bytes) {
+  if (bytes === null || bytes === undefined) return "Unknown size";
   const size = Number(bytes);
   if (!Number.isFinite(size) || size < 0) return "Unknown size";
   if (size < 1024) return size + " B";
@@ -1267,7 +1268,7 @@ function formatDocumentSize(bytes) {
 }
 
 async function handleSalesCommand(env, chatId, raw) {
-  const rest = raw.replace(/^\/sales(?:@\\w+)?/i, "").trim();
+  const rest = raw.replace(/^\/sales(?:@\w+)?/i, "").trim();
   const lower = rest.toLowerCase();
 
   if (!lower || lower === "help") {
@@ -1314,7 +1315,7 @@ async function handleSalesCommand(env, chatId, raw) {
     return;
   }
 
-  const match = /^file\\s+(\\d+)$/i.exec(rest);
+  const match = /^file\s+(\d+)$/i.exec(rest);
   if (match) {
     const id = Number(match[1]);
     const file = await env.DB.prepare(
