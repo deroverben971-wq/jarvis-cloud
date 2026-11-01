@@ -162,6 +162,7 @@ export async function searchUSConstructionCompanies(options = {}) {
     candidates,
     total: typeof payload.total === "number" && Number.isFinite(payload.total) ? payload.total : null,
     sourceUrl: DIRECTORY_SOURCE,
-    queryUrl: url.toString()
+    queryUrl: url.toString(),
+    attempts
   };
 }
