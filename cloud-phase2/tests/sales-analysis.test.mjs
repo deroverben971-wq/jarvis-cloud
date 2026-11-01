@@ -1,12 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  MAX_PLAIN_TEXT_BYTES,
   MAX_PRODUCT_TEXT_CHARS,
   buildProductAnalysisMessages,
   getSalesExtractionMode,
   normalizeExtractedText,
   parseProductProfile
 } from "../src/sales-analysis.mjs";
+
+test("keeps plain-text extraction under the Free Worker CPU budget", () => {
+  assert.equal(MAX_PLAIN_TEXT_BYTES, 512 * 1024);
+});
 
 test("routes plain text and supported Workers AI conversion formats", () => {
   assert.equal(getSalesExtractionMode("product.txt").mode, "plain_text");
