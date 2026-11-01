@@ -35,6 +35,7 @@ const HELP = [
   "/sales research Company | https://official-site.example — research an official company website",
   "/sales research list — list recent company research",
   "/sales research ID — view a research report",
+  "/sales prospect RESEARCH_ID | email | contact — add a researched public inbox to a campaign",
   "Upload PDF, DOCX, XLSX, CSV, TXT, or MD as a Telegram document (not as a photo).",
   "",
   "EMAIL OUTREACH",
@@ -912,13 +913,14 @@ async function handleOutreachCommand(env, chatId, raw) {
   }
   if (lower === "prospects" || lower === "list") {
     if (!campaign || campaign.status === "setup") { await sendText(env, chatId, "Finish campaign setup first."); return; }
-    const rows = await env.DB.prepare("SELECT id,email,contact_name,company,status,followup_due_at,contact_permission_status,guardian_reviewed_at FROM outreach_prospects WHERE campaign_id=? ORDER BY id DESC LIMIT 25")
+    const rows = await env.DB.prepare("SELECT id,email,contact_name,company,status,followup_due_at,contact_permission_status,guardian_reviewed_at,contact_source_url FROM outreach_prospects WHERE campaign_id=? ORDER BY id DESC LIMIT 25")
       .bind(campaign.id).all();
     await sendText(env, chatId, (rows.results || []).length
       ? "📋 OUTREACH PROSPECTS\n\n" + rows.results.map(p => "#" + p.id + " · " + (p.contact_name || p.company || p.email) +
         "\n" + p.email + " · " + p.status +
         "\nPermission: " + p.contact_permission_status +
         " · Guardian draft review: " + (p.guardian_reviewed_at ? "yes" : "no") +
+        (p.contact_source_url ? "\nSource: " + p.contact_source_url : "") +
         (p.followup_due_at ? "\nFollow-up due: " + p.followup_due_at : "")).join("\n\n")
       : "No prospects yet. Add one with:\n/outreach add email@business.com | Name | Company | Why relevant");
     return;
@@ -1875,6 +1877,7 @@ async function handleSalesCommand(env, chatId, raw) {
       "/sales status — show analysis totals",
       "/sales script ID — generate or refresh a sales script from an analyzed product",
       "/sales script show ID — view the saved sales script",
+      "/sales prospect RESEARCH_ID | email | contact — add a researched public inbox to an active campaign",
       "",
       "Uploaded documents are queued by the minute Cron Trigger. Company research is available with /sales research; generate a product sales script with /sales script ID.",
       "Sales Intelligence never sends an email during product analysis."
@@ -1883,6 +1886,61 @@ async function handleSalesCommand(env, chatId, raw) {
   }
 
 
+
+
+  const salesProspectMatch = /^prospect\s+([\s\S]+)$/i.exec(rest);
+  if (salesProspectMatch) {
+    const fields = salesProspectMatch[1].split("|").map(value => value.trim());
+    if (fields.length !== 3 || !/^\d+$/.test(fields[0]) || !validEmailAddress(fields[1])) {
+      await sendText(env, chatId, "Use /sales prospect RESEARCH_ID | public-role-email | contact name\nThe email must be one of the role-based addresses shown in the saved research report.");
+      return;
+    }
+    const campaign = await getCurrentOutreachCampaign(env, chatId);
+    if (!campaign || campaign.status !== "active") {
+      await sendText(env, chatId, "Set up an active campaign first with /outreach start. No prospect was added.");
+      return;
+    }
+    const researchId = Number(fields[0]);
+    const research = await env.DB.prepare(
+      "SELECT id,company_name,website_url,profile_json,public_emails_json,status FROM sales_research WHERE id=? AND chat_id=?"
+    ).bind(researchId,chatId).first();
+    if (!research || research.status !== "completed") {
+      await sendText(env, chatId, "Completed company research #" + researchId + " was not found. No prospect was added.");
+      return;
+    }
+    const email = fields[1].toLowerCase();
+    const publicEmails = JSON.parse(research.public_emails_json || "[]");
+    const publicContact = publicEmails.find(item => String(item.email || "").toLowerCase() === email && item.permissionStatus === "public_contact_only");
+    if (!publicContact) {
+      await sendText(env, chatId, "That address was not found as a role-based contact on the official pages in this research report. No prospect was added.");
+      return;
+    }
+    const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM outreach_prospects WHERE campaign_id=?").bind(campaign.id).first();
+    if (Number(count?.n || 0) >= 25) { await sendText(env, chatId, "This first version supports at most 25 prospects per campaign."); return; }
+    const suppressed = await env.DB.prepare("SELECT email FROM outreach_suppressions WHERE chat_id=? AND email=?").bind(chatId,email).first();
+    if (suppressed) { await sendText(env, chatId, "That address is on your opt-out list. No prospect was added."); return; }
+    const duplicate = await env.DB.prepare("SELECT id FROM outreach_prospects WHERE campaign_id=? AND email=?").bind(campaign.id,email).first();
+    if (duplicate) { await sendText(env, chatId, "That email is already prospect #" + duplicate.id + "."); return; }
+    const profile = JSON.parse(research.profile_json || "{}");
+    const signals = (Array.isArray(profile.fit_signals) ? profile.fit_signals : [])
+      .map(item => item.evidence + " (source: " + item.sourceUrl + ")").slice(0,4).join("\n");
+    const context = [
+      "Official website research: " + research.website_url,
+      "Business summary: " + String(profile.business_summary || "").slice(0,700),
+      "Potential-fit hypotheses (not verified needs): " + (signals || "No clear fit signal recorded."),
+      "Public contact source: " + publicContact.sourceUrl,
+      "Contact status: publicly listed only; explicit marketing opt-in has NOT been confirmed."
+    ].join("\n").slice(0,2000);
+    const now = new Date().toISOString();
+    const saved = await env.DB.prepare(
+      "INSERT INTO outreach_prospects (campaign_id,chat_id,email,contact_name,company,relevance_context,contact_source_url,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'new',?,?)"
+    ).bind(campaign.id,chatId,email,fields[2] || "Business contact",research.company_name,context,publicContact.sourceUrl,now,now).run();
+    await sendText(env, chatId,
+      "✅ Added researched contact as prospect #" + saved.meta?.last_row_id + ".\nCompany: " + research.company_name +
+      "\nEmail: " + email + "\nSource: " + publicContact.sourceUrl +
+      "\nPermission: UNVERIFIED — a public address is not consent. Do not send unless the recipient separately opts in. No email was sent.");
+    return;
+  }
 
   const scriptMatch = /^script(?:\s+(show\s+)?(\d+))?$/i.exec(rest);
   if (scriptMatch) {
