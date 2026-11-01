@@ -5,6 +5,9 @@ on:
     paths:
       - "cloud-phase2/src/index.js"
       - "cloud-phase2/src/reminder-parser.mjs"
+      - "cloud-phase2/src/sales-documents.mjs"
+      - "cloud-phase2/tests/sales-documents.test.mjs"
+      - "cloud-phase2/migrations/20261101_sales_documents.sql"
       - "cloud-phase2/tests/reminder-parser.test.mjs"
       - "cloud-phase2/wrangler.jsonc"
       - "cloud-phase2/google-calendar-apps-script.js"
@@ -50,8 +53,9 @@ jobs:
         run: |
           node --check cloud-phase2/src/index.js
           node --check cloud-phase2/src/reminder-parser.mjs
-      - name: Test reminder parsing and Manila time handling
-        run: node --test cloud-phase2/tests/reminder-parser.test.mjs
+          node --check cloud-phase2/src/sales-documents.mjs
+      - name: Test reminder and sales document parsing
+        run: node --test cloud-phase2/tests/*.test.mjs
       - name: Check Google Apps Script JavaScript syntax
         run: |
           cp cloud-phase2/google-calendar-apps-script.js /tmp/google-calendar-apps-script.js
@@ -73,8 +77,8 @@ jobs:
           sql = Path("cloud-phase2/schema.sql").read_text(encoding="utf-8")
           connection = sqlite3.connect(":memory:")
           connection.executescript(sql)
-          migration = Path("cloud-phase2/migrations/20261029_daily_schedule_briefings.sql").read_text(encoding="utf-8")
-          connection.executescript(migration)
+          for migration_path in sorted(Path("cloud-phase2/migrations").glob("*.sql")):
+              connection.executescript(migration_path.read_text(encoding="utf-8"))
           connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
           print("D1 schema syntax passed.")
           PY
