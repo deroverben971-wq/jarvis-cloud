@@ -116,7 +116,7 @@ Available commands:
 - `/sales product ID` — show the saved product analysis.
 - `/sales status` — show queue totals.
 
-Accepted intake extensions: PDF, DOCX, PPTX, XLSX, TXT, MD, and CSV. Telegram bot downloads are limited to 20 MB. PDF, DOCX, XLSX, and CSV use the Workers AI Markdown Conversion binding; TXT and MD are decoded as UTF-8. PPTX can be registered as a document, but the current converter does not list it as a supported format; export it as PDF before analysis.
+Accepted intake extensions: PDF, DOCX, PPTX, XLSX, TXT, MD, and CSV. Telegram bot downloads are limited to 20 MB. PDF, DOCX, XLSX, and CSV use the Workers AI Markdown Conversion binding (up to 20 MB). TXT and MD are decoded as UTF-8 and capped at 512 KB to keep local Worker CPU use bounded. PPTX can be registered as a document, but the current converter does not list it as a supported format; export it as PDF before analysis.
 
 A new upload is queued automatically. The existing minute Cron Trigger processes at most one product document per scheduled run. Product analysis extracts at most 60,000 characters and stores the bounded extracted text, a SHA-256 digest, and a structured profile in D1. The report distinguishes document facts, potential benefits, unsupported claims that need verification, and missing information. Document contents are untrusted data; instructions embedded in a product file are not followed.
 
