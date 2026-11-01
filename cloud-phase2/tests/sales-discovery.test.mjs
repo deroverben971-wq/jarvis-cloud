@@ -70,7 +70,7 @@ test("rendered discovery report states its scope and has no email sending action
       awards: [{description:"Building renovation",awardId:"TEST-123",link:"https://www.usaspending.gov/award/CONT_AWD_TEST_123"}]
     }]
   }, "Contractor Profit Control Center");
-  assert.match(output, /USAspending\\.gov/);
+  assert.match(output, /USAspending\.gov/);
   assert.match(output, /does not prove product need or buying intent/);
   assert.match(output, /No email was sent/);
 });
