@@ -110,14 +110,15 @@ export async function searchUSConstructionCompanies(options = {}) {
     if (!name || !website) continue;
     const checked = validateResearchRequest(name, website);
     if (!checked.ok || isBlockedHost(checked.hostname)) continue;
-    if (seen.has(checked.hostname)) continue;
-    seen.add(checked.hostname);
+    const hostname = checked.hostname.replace(/^www\\./i, "");
+    if (seen.has(hostname)) continue;
+    seen.add(hostname);
     const locality = clean(row.locality, 80);
     const region = clean(row.region, 80);
     candidates.push({
       name: checked.prospectName,
-      websiteUrl: checked.websiteUrl,
-      hostname: checked.hostname,
+      websiteUrl: "https://" + hostname + "/",
+      hostname,
       location: [locality, region, "United States"].filter(Boolean).join(", ")
     });
     if (candidates.length >= limit) break;
