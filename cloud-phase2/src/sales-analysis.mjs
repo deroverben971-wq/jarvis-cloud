@@ -1,4 +1,5 @@
 export const MAX_PRODUCT_TEXT_CHARS = 60000;
+export const MAX_PLAIN_TEXT_BYTES = 512 * 1024;
 export const MAX_PROFILE_ARRAY_ITEMS = 12;
 
 export function getSalesExtractionMode(fileName) {
