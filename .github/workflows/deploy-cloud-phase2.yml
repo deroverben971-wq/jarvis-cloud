@@ -57,6 +57,7 @@ jobs:
           node --check cloud-phase2/src/reminder-parser.mjs
           node --check cloud-phase2/src/sales-documents.mjs
           node --check cloud-phase2/src/sales-analysis.mjs
+          node --check cloud-phase2/src/sales-research.mjs
           node --check cloud-phase2/bootstrap-api-deploy.mjs
           node --test cloud-phase2/tests/*.test.mjs
           node --check cloud-phase2/gmail-outreach-apps-script.js
@@ -77,8 +78,8 @@ jobs:
 
       - name: Production database migration reminder
         run: |
-          echo "Before deployment, apply cloud-phase2/migrations/20261101_sales_documents.sql and cloud-phase2/migrations/20261102_sales_document_analysis.sql to the existing jarvis-reminders D1 database."
-          echo "This workflow validates SQL but does not run remote D1 migrations."
+          echo "Before deployment, apply cloud-phase2/migrations/20261101_sales_documents.sql, 20261102_sales_document_analysis.sql, and 20261103_sales_research_permission_gates.sql to the existing jarvis-reminders D1 database in order."
+          echo "This workflow validates SQL but does not run remote D1 migrations. The third migration adds company research storage and permission/guardian review gates."
       - name: Check Cloudflare credentials are configured
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
