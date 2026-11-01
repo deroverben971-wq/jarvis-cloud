@@ -1,6 +1,6 @@
 function cleanText(value, max = 500) {
   return typeof value === "string"
-    ? value.replace(/[\\u0000-\\u001f\\u007f]/g, " ").replace(/\\s+/g, " ").trim().slice(0, max)
+    ? value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max)
     : "";
 }
 
@@ -10,7 +10,7 @@ function cleanList(value, maxItems = 6, maxLength = 220) {
 }
 
 function parseJsonObject(raw) {
-  const text = String(raw || "").trim().replace(/^\\x60{3}(?:json)?\\s*/i, "").replace(/\\s*\\x60{3}$/i, "");
+  const text = String(raw || "").trim().replace(/^\x60{3}(?:json)?\s*/i, "").replace(/\s*\x60{3}$/i, "");
   try {
     const value = JSON.parse(text);
     return value && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -56,7 +56,7 @@ export function buildSalesMarketMessages(productProfile) {
     },
     {
       role: "user",
-      content: "Build a product-led target-market plan from this product profile:\\n" + JSON.stringify(facts)
+      content: "Build a product-led target-market plan from this product profile:\n" + JSON.stringify(facts)
     }
   ];
 }
@@ -69,7 +69,7 @@ export function parseSalesMarketResult(raw) {
     why_fit: cleanText(item && item.why_fit, 500),
     buyer_roles: cleanList(item && item.buyer_roles, 5, 100),
     search_queries: cleanList(item && item.search_queries, 2, 180)
-      .filter(query => !/@|\\bemail\\b|\\bphone number\\b|\\bpersonal contact\\b/i.test(query))
+      .filter(query => !/@|\bemail\b|\bphone number\b|\bpersonal contact\b/i.test(query))
   })).filter(item => item.name && item.search_queries.length) : [];
   if (!segments.length) return { ok: false, error: "The market analyst did not identify usable target segments and search queries." };
   return {
@@ -101,7 +101,7 @@ export function renderSalesMarketPlan(productName, plan) {
       "Google searches to review:"
     );
     for (const query of segment.search_queries) {
-      lines.push("• " + query + "\\nhttps://www.google.com/search?q=" + encodeURIComponent(query));
+      lines.push("• " + query + "\nhttps://www.google.com/search?q=" + encodeURIComponent(query));
     }
   }
   if (plan.exclusions.length) {
@@ -116,5 +116,5 @@ export function renderSalesMarketPlan(productName, plan) {
     "",
     "This free mode creates product-specific searches; it does not fetch Google results automatically or verify that a prospect wants contact. No contact was added and no email was sent."
   );
-  return lines.join("\\n").slice(0, 3900);
+  return lines.join("\n").slice(0, 3900);
 }
