@@ -242,13 +242,17 @@ Keep the existing Telegram webhook, DB binding, AI binding, and secrets. Updatin
 
 Use `/sales hunt PRODUCT_FILE_ID` after uploading and successfully analyzing the product document. This initial directory hunt is limited to products whose market plan includes NAICS 23 — Construction.
 
-JARVIS makes one request to the public `companies.directory` US company-directory endpoint, filtering for the Construction industry and records with a website. The public read endpoint is documented as requiring no API key; its published fair-use limit is 60 requests per minute. JARVIS queues at most three new organization websites per request and uses the existing minute research queue to assess them.
+JARVIS first queries the public `companies.directory` US company-directory endpoint, filtering for Construction records with websites. The public read endpoint is documented as requiring no API key and has a published fair-use limit of 60 requests per minute. It retries transient errors up to three times while honoring `Retry-After` when present.
 
-The directory provider may return additional contact fields. JARVIS intentionally ignores all directory-provided email and phone fields and stores only company name, location, and website. The existing official-site researcher then checks the supplied homepage and up to two relevant same-domain pages. It reports only generic role-based addresses (for example `info@` or `sales@`) that are visibly published on the company's own domain. Named personal addresses and personal Gmail accounts are not collected.
+If that provider is unavailable or yields no usable websites, JARVIS tries a clearly limited fallback: ProFix Directory's public Ohio home-services contractor catalogue (`https://profixdirectory.com/api/all.json`). ProFix describes its public read API as requiring no authentication; its open dataset is CC-BY-4.0 and contains Ohio-only home-services contractor records. JARVIS filters to Ohio records with construction-relevant trade categories and official websites. This fallback is **not nationwide coverage** and does not represent general contractors or construction-management firms across all states.
 
-Check queue progress with `/sales research list`. Each completed research report contains its source pages and product-fit evidence. Directory listings and websites can be incomplete or outdated; verify the organization and the site before relying on a result.
+JARVIS queues at most three new organization websites per request and uses the existing minute research queue to assess them. Both directory sources may return contact fields; JARVIS intentionally ignores provider-supplied personal emails and phone numbers and stores only company name, location, and website. The existing official-site researcher then checks the company's homepage and up to two relevant same-domain pages. It reports only generic role-based addresses (for example `info@` or `sales@`) that are visibly published on the company's own domain. Named personal addresses and personal Gmail accounts are not collected.
 
-A public business inbox is a contact channel, not marketing consent. The hunt does not add records to an email campaign and does not send messages. The existing opt-in and parent/guardian review requirements remain in force.
+Check queue progress with `/sales research list`. Each completed research report contains its source pages and product-fit evidence. Directory listings and websites can be incomplete or outdated; verify each organization and website before relying on a result.
+
+A public business inbox is a contact channel, not marketing consent. The hunt does not add records to an email campaign and does not send messages. Existing explicit opt-in and parent/guardian review requirements remain in force.
 
 Provider documentation: https://companies.directory/docs
 Source catalogue and coverage notes: https://companies.directory/sources
+ProFix developer docs: https://profixdirectory.com/developer
+ProFix dataset and licence: https://profixdirectory.com/open-data
