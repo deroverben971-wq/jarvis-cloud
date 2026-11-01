@@ -172,7 +172,7 @@ This mode reuses the existing Cloudflare Workers AI binding. It adds no API key,
 
 The generated market plan is a hypothesis based on the uploaded product document, not a verified prospect list or evidence of buying interest. Search results and websites must be checked manually. Do not use public business contact details as proof of permission to send marketing email. Existing recipient opt-in and parent/guardian review gates remain mandatory. This command never adds prospects to campaigns and never sends email.
 
-A general-purpose web search API with a free, permitted server-side tier is not available for this deployment as currently configured. Do not replace this mode with scraping search-result pages or overloading public community data services. A future fully automatic discovery phase needs a documented and permitted source with a genuinely free quota; until then, this feature only generates targeted searches.
+A card-free general-purpose web search API with a permitted server-side free quota is not configured for this deployment. Brave Search currently advertises $5 in monthly Search credits (about 1,000 requests), but activating the plan requires payment details and a card verification hold, so it is excluded from this strict no-card setup. Do not replace this mode with scraping search-result pages or overloading public community data services. A future fully automatic discovery phase needs an adult-managed, documented, permitted source with a genuinely free quota; until then, this feature only generates targeted searches. See https://brave.com/search/api/ and https://api-dashboard.search.brave.com/documentation/resources/help-feedback.
 
 ## Gmail outreach (approval-first, low volume)
 
