@@ -35,3 +35,13 @@ CREATE INDEX IF NOT EXISTS idx_sales_research_chat_created
   ON sales_research (chat_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_sales_research_status
   ON sales_research (status, id);
+
+
+CREATE TABLE IF NOT EXISTS sales_scripts (
+  product_document_id INTEGER PRIMARY KEY,
+  chat_id TEXT NOT NULL,
+  script_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (product_document_id) REFERENCES sales_documents(id) ON DELETE CASCADE
+);
