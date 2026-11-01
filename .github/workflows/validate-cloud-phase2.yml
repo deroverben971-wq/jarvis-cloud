@@ -7,21 +7,14 @@ on:
       - "cloud-phase2/src/reminder-parser.mjs"
       - "cloud-phase2/src/sales-documents.mjs"
       - "cloud-phase2/src/sales-analysis.mjs"
-      - "cloud-phase2/tests/sales-documents.test.mjs"
-      - "cloud-phase2/tests/sales-analysis.test.mjs"
-      - "cloud-phase2/migrations/20261101_sales_documents.sql"
-      - "cloud-phase2/migrations/20261102_sales_document_analysis.sql"
-      - "cloud-phase2/src/sales-documents.mjs"
-      - "cloud-phase2/tests/sales-documents.test.mjs"
-      - "cloud-phase2/migrations/20261101_sales_documents.sql"
-      - "cloud-phase2/tests/reminder-parser.test.mjs"
+      - "cloud-phase2/tests/*.test.mjs"
+      - "cloud-phase2/migrations/*.sql"
       - "cloud-phase2/wrangler.jsonc"
       - "cloud-phase2/google-calendar-apps-script.js"
       - "cloud-phase2/gmail-outreach-apps-script.js"
       - "cloud-phase2/gmail-outreach-appsscript.json"
       - "cloud-phase2/appsscript.json"
       - "cloud-phase2/schema.sql"
-      - "cloud-phase2/migrations/20261029_daily_schedule_briefings.sql"
       - ".github/workflows/validate-cloud-phase2.yml"
       - ".github/workflows/deploy-cloud-phase2.yml"
   push:
@@ -30,13 +23,16 @@ on:
     paths:
       - "cloud-phase2/src/index.js"
       - "cloud-phase2/src/reminder-parser.mjs"
-      - "cloud-phase2/tests/reminder-parser.test.mjs"
+      - "cloud-phase2/src/sales-documents.mjs"
+      - "cloud-phase2/src/sales-analysis.mjs"
+      - "cloud-phase2/tests/*.test.mjs"
+      - "cloud-phase2/migrations/*.sql"
       - "cloud-phase2/wrangler.jsonc"
       - "cloud-phase2/google-calendar-apps-script.js"
       - "cloud-phase2/gmail-outreach-apps-script.js"
       - "cloud-phase2/gmail-outreach-appsscript.json"
+      - "cloud-phase2/appsscript.json"
       - "cloud-phase2/schema.sql"
-      - "cloud-phase2/migrations/20261029_daily_schedule_briefings.sql"
       - ".github/workflows/validate-cloud-phase2.yml"
       - ".github/workflows/deploy-cloud-phase2.yml"
 
@@ -61,8 +57,7 @@ jobs:
           node --check cloud-phase2/src/reminder-parser.mjs
           node --check cloud-phase2/src/sales-documents.mjs
           node --check cloud-phase2/src/sales-analysis.mjs
-          node --check cloud-phase2/src/sales-documents.mjs
-      - name: Test reminder and sales document parsing
+      - name: Test reminder and Sales Intelligence helpers
         run: node --test cloud-phase2/tests/*.test.mjs
       - name: Check Google Apps Script JavaScript syntax
         run: |
@@ -82,11 +77,10 @@ jobs:
           import sqlite3
           from pathlib import Path
 
-          sql = Path("cloud-phase2/schema.sql").read_text(encoding="utf-8")
           connection = sqlite3.connect(":memory:")
-          connection.executescript(sql)
+          connection.executescript(Path("cloud-phase2/schema.sql").read_text(encoding="utf-8"))
           for migration_path in sorted(Path("cloud-phase2/migrations").glob("*.sql")):
               connection.executescript(migration_path.read_text(encoding="utf-8"))
           connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
-          print("D1 schema syntax passed.")
+          print("D1 schema and all additive migrations passed syntax validation.")
           PY
