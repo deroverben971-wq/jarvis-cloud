@@ -165,7 +165,7 @@ export function classifyCalendarRequest(raw) {
     return { kind: "move" };
   }
   if (/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:cancel|delete|remove)\s+(?:my\s+)?(?:calendar\s+)?(.+)$/i.test(value) &&
-      !/^(?:reminder|alarm)\b/i.test(value.replace(/^(?:please\s+)?(?:cancel|delete|remove)\s+(?:my\s+)?/i, ""))) {
+      !/^(?:reminder|alarm)\b/i.test(value.replace(/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:cancel|delete|remove)\s+(?:my\s+)?/i, ""))) {
     return { kind: "delete" };
   }
   if (/^(?:show|list|open|check)(?:\s+me)?\s+(?:my\s+)?(?:google\s+)?calendar(?:\s+events)?(?:\s+(?:today|tomorrow|this week|next week))?\??$/i.test(value) ||
