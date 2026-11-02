@@ -31,3 +31,14 @@ CREATE TABLE IF NOT EXISTS calendar_intent_drafts (
 
 CREATE INDEX IF NOT EXISTS idx_calendar_intent_drafts_expiry
   ON calendar_intent_drafts (expires_at);
+
+-- Short-lived context for AM/PM clarification of conversational reminder requests.
+CREATE TABLE IF NOT EXISTS reminder_intent_drafts (
+  chat_id TEXT PRIMARY KEY,
+  original_text TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_reminder_intent_drafts_expiry
+  ON reminder_intent_drafts (expires_at);
