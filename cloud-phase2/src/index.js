@@ -3715,6 +3715,11 @@ export default {
       if (!env.JARVIS_BRIDGE_SECRET || request.headers.get("X-Jarvis-Bridge-Secret") !== env.JARVIS_BRIDGE_SECRET) {
         return json({ ok: false, error: "Unauthorized" }, 401);
       }
+      const seenAt = new Date().toISOString();
+      await env.DB.prepare(
+        "INSERT INTO local_bridge_presence (chat_id, last_seen_at, model) VALUES (?, ?, ?) " +
+        "ON CONFLICT(chat_id) DO UPDATE SET last_seen_at = excluded.last_seen_at, model = excluded.model"
+      ).bind(String(env.TELEGRAM_CHAT_ID), seenAt, "ollama").run();
       const row = await env.DB.prepare(
         "SELECT id, chat_id, message_text FROM bridge_queue WHERE status = 'pending' ORDER BY id LIMIT 1"
       ).first();
@@ -3723,7 +3728,28 @@ export default {
         "UPDATE bridge_queue SET status = 'processing', attempts = attempts + 1 WHERE id = ? AND status = 'pending'"
       ).bind(row.id).run();
       if (!claimed.meta?.changes) return json({ ok: true, job: null });
-      return json({ ok: true, job: { id: row.id, chat_id: row.chat_id, text: row.message_text } });
+      return json({
+        ok: true,
+        job: { id: row.id, chat_id: row.chat_id, text: row.message_text, model: "ollama", tools: JARVIS_OLLAMA_TOOLS }
+      });
+    }
+    if (request.method === "POST" && url.pathname === "/bridge/tool") {
+      if (!env.JARVIS_BRIDGE_SECRET || request.headers.get("X-Jarvis-Bridge-Secret") !== env.JARVIS_BRIDGE_SECRET) {
+        return json({ ok: false, error: "Unauthorized" }, 401);
+      }
+      let body;
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      if (String(body.chat_id || "") !== String(env.TELEGRAM_CHAT_ID) ||
+          typeof body.name !== "string" || body.name.length > 80) {
+        return json({ ok: false, error: "Invalid tool request" }, 400);
+      }
+      try {
+        const result = await executeJarvisTool(env, String(body.chat_id), body.name, body.arguments || {});
+        return json({ ok: true, result });
+      } catch (error) {
+        console.error("Local Ollama tool execution failed:", body.name, error?.message || "unknown error");
+        return json({ ok: true, result: { ok: false, error: "Tool execution failed safely. No success was reported." } });
+      }
     }
     if (request.method === "POST" && url.pathname === "/bridge/reply") {
       if (!env.JARVIS_BRIDGE_SECRET || request.headers.get("X-Jarvis-Bridge-Secret") !== env.JARVIS_BRIDGE_SECRET) {
@@ -3734,11 +3760,20 @@ export default {
       if (!Number.isSafeInteger(body.id) || body.id < 1 || typeof body.text !== "string") {
         return json({ ok: false, error: "Invalid reply payload" }, 400);
       }
-      const row = await env.DB.prepare("SELECT chat_id, status FROM bridge_queue WHERE id = ?").bind(body.id).first();
+      const row = await env.DB.prepare(
+        "SELECT chat_id, message_text, status FROM bridge_queue WHERE id = ?"
+      ).bind(body.id).first();
       if (!row || row.status !== "processing") return json({ ok: false, error: "Job not found or not processing" }, 404);
       await sendText(env, row.chat_id, body.text);
-      await env.DB.prepare("UPDATE bridge_queue SET status = 'done', completed_at = ? WHERE id = ?")
-        .bind(new Date().toISOString(), body.id).run();
+      const completedAt = new Date().toISOString();
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO cloud_messages (chat_id, role, content, created_at) VALUES (?, 'user', ?, ?)")
+          .bind(row.chat_id, row.message_text, completedAt),
+        env.DB.prepare("INSERT INTO cloud_messages (chat_id, role, content, created_at) VALUES (?, 'assistant', ?, ?)")
+          .bind(row.chat_id, body.text.slice(0, 3900), completedAt),
+        env.DB.prepare("UPDATE bridge_queue SET status = 'done', completed_at = ? WHERE id = ? AND status = 'processing'")
+          .bind(completedAt, body.id)
+      ]);
       return json({ ok: true });
     }
     if (request.method !== "POST" || url.pathname !== "/telegram") {
@@ -3771,24 +3806,30 @@ export default {
           await handleSalesDocument(env, message);
         } else if (message.text) {
           const messageChatId = String(message.chat?.id ?? "");
-          const pendingReminder = await env.DB.prepare(
-            "SELECT chat_id FROM reminder_intent_drafts WHERE chat_id = ? AND expires_at > ?"
-          ).bind(messageChatId, new Date().toISOString()).first();
-          const reminderFollowup = !!pendingReminder &&
-            /^(?:am|pm|cancel|never mind|nevermind|forget it)$/i.test(String(message.text).trim());
-          if (isCloudCommand(message) || reminderFollowup) {
+          const cleanText = String(message.text || "").trim();
+          const explicitCloudControl = cleanText.startsWith("/") ||
+            /^(?:help|confirm|confirmdelete|canceldelete|cancel)\b/i.test(cleanText);
+          if (explicitCloudControl) {
             await handleMessage(env, message, update.update_id);
           } else {
             const pendingOutreach = await env.DB.prepare("SELECT * FROM outreach_campaigns WHERE chat_id = ? AND status = 'setup' ORDER BY id DESC LIMIT 1")
               .bind(String(message.chat?.id ?? "")).first();
             if (pendingOutreach) {
               await handleOutreachSetupInput(env, message, pendingOutreach);
-            } else if (env.AI) {
-              // Route ordinary Telegram messages through the AI agent and preserve
-              // the Telegram update ID for safe local-bridge fallback.
-              await handleMessage(env, message, update.update_id);
             } else {
-              await enqueueForLocalJarvis(env, message, update.update_id);
+              // Local Ollama is the primary brain while the Windows bridge is
+              // actively polling. Cloudflare AI handles requests when it is off.
+              const presence = await env.DB.prepare(
+                "SELECT last_seen_at FROM local_bridge_presence WHERE chat_id = ?"
+              ).bind(messageChatId).first();
+              const bridgeFresh = presence && Date.now() - new Date(presence.last_seen_at).getTime() <= 15000;
+              if (bridgeFresh) {
+                await enqueueForLocalJarvis(env, message, update.update_id);
+              } else if (env.AI) {
+                await handleMessage(env, message, update.update_id);
+              } else {
+                await enqueueForLocalJarvis(env, message, update.update_id);
+              }
             }
           }
         }
