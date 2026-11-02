@@ -254,6 +254,7 @@ export function calendarDeleteQuery(raw) {
     .replace(/^(?:please\s+)?(?:cancel|delete|remove)\s+(?:my\s+)?/i, "")
     .replace(/^(?:calendar\s+)?(?:event|meeting|appointment)\s+/i, "")
     .replace(/\s+from\s+(?:my\s+)?calendar$/i, "")
+    .replace(/[?!.]+\s*$/g, "")
     .trim();
   return query.slice(0, 100);
 }
