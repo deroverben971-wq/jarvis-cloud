@@ -240,7 +240,7 @@ export function parseCalendarEventRequest(raw, now = new Date()) {
 }
 
 export function parseCalendarMoveRequest(raw, now = new Date()) {
-  const match = /^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:move|reschedule|change)\s+(?:my\s+)?(.+?)\s+(?:to|for)\s+(.+)$/i.exec(String(raw || "").trim());
+  const match = /^(?:please\s+)?(?:move|reschedule|change)\s+(?:my\s+)?(.+?)\s+(?:to|for)\s+(.+)$/i.exec(normalizeCalendarRequest(raw));
   if (!match) return { ok: false, error: "Say which event to move and the new date and time." };
   const query = match[1].replace(/^(?:calendar\s+)?(?:event|meeting|appointment)\s+/i, "").trim();
   if (query.length < 2) return { ok: false, error: "Please include the event title so I can find the right calendar entry." };
@@ -250,8 +250,8 @@ export function parseCalendarMoveRequest(raw, now = new Date()) {
 }
 
 export function calendarDeleteQuery(raw) {
-  let query = String(raw || "").trim()
-    .replace(/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:cancel|delete|remove)\s+(?:my\s+)?/i, "")
+  let query = normalizeCalendarRequest(raw)
+    .replace(/^(?:please\s+)?(?:cancel|delete|remove)\s+(?:my\s+)?/i, "")
     .replace(/^(?:calendar\s+)?(?:event|meeting|appointment)\s+/i, "")
     .replace(/\s+from\s+(?:my\s+)?calendar$/i, "")
     .trim();
