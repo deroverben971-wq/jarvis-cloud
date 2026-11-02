@@ -1,4 +1,5 @@
 import { isReminderRequest, manilaInputToUtc, parseReminderRequest } from "./reminder-parser.mjs";
+import { calendarDeleteQuery, classifyCalendarRequest, parseCalendarEventRequest, parseCalendarMoveRequest } from "./calendar-intents.mjs";
 import { validateSalesDocument } from "./sales-documents.mjs";
 import { buildProductAnalysisMessages, getSalesExtractionMode, MAX_PLAIN_TEXT_BYTES, normalizeExtractedText, parseProductProfile } from "./sales-analysis.mjs";
 import { buildSalesResearchMessages, discoverResearchPages, extractResearchPage, MAX_RESEARCH_PAGE_BYTES, MAX_RESEARCH_PAGES, parseSalesResearchResult, validateResearchRequest } from "./sales-research.mjs";
@@ -24,6 +25,10 @@ const HELP = [
   "",
   "GOOGLE CALENDAR",
   "/calendar — list the next 7 days",
+  "Say: What's on my calendar tomorrow? or Do I have any meetings this week?",
+  "Say: Schedule a meeting with Alex tomorrow at 3 PM for 30 minutes.",
+  "Say: Move my dentist appointment to Friday at 4 PM, or cancel my dentist appointment.",
+  "Calendar create/move requests show a preview and require 'confirm CODE' before changing Google Calendar.",
   "/event YYYY-MM-DD HH:MM duration title — add an event (Manila time)",
   "/alarm YYYY-MM-DD HH:MM title — Calendar popup alert 5 minutes early (not an Android Clock alarm)",
   "/deleteevent title — find matching events and request confirmation before deleting",
@@ -251,6 +256,198 @@ async function showRemindersForDay(env, chatId, dayOffset) {
   }
   const lines = items.map(r => "#" + r.id + " · " + formatManila(r.due_at) + "\n   " + r.task);
   await sendText(env, chatId, "📅 YOUR REMINDERS FOR " + label + "\n\n" + lines.join("\n\n"));
+}
+
+
+function manilaDayStart(parts, offsetDays = 0) {
+  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day + offsetDays, -8, 0));
+}
+
+async function showCalendarAndReminders(env, chatId, range = "week") {
+  const today = localDateParts();
+  let start, end, label;
+  if (range === "today") { start = manilaDayStart(today); end = manilaDayStart(today, 1); label = "TODAY"; }
+  else if (range === "tomorrow") { start = manilaDayStart(today, 1); end = manilaDayStart(today, 2); label = "TOMORROW"; }
+  else if (range === "next_week") {
+    const weekday = new Date(Date.UTC(today.year, today.month - 1, today.day)).getUTCDay();
+    const delta = (8 - weekday) % 7 || 7;
+    start = manilaDayStart(today, delta); end = manilaDayStart(today, delta + 7); label = "NEXT WEEK";
+  } else { start = manilaDayStart(today); end = manilaDayStart(today, 7); label = "THIS WEEK"; }
+
+  const [calendar, reminderRows] = await Promise.all([
+    callGoogleCalendar(env, { action: "list_events", timeMin: start.toISOString(), timeMax: end.toISOString(), days: 7 }),
+    env.DB.prepare(
+      "SELECT id, task, due_at FROM reminders WHERE chat_id = ? AND sent_at IS NULL AND cancelled_at IS NULL AND due_at >= ? AND due_at < ? ORDER BY due_at LIMIT 30"
+    ).bind(String(chatId), start.toISOString(), end.toISOString()).all()
+  ]);
+  const lines = ["📅 JARVIS SCHEDULE — " + label];
+  if (!calendar.ok) lines.push("", calendar.setupMissing
+    ? "Google Calendar is not connected. Your JARVIS reminders are still shown below."
+    : "Google Calendar could not be read: " + String(calendar.error || "unknown error"));
+  else {
+    const events = (calendar.events || []).slice(0, 20);
+    lines.push("", "GOOGLE CALENDAR");
+    if (!events.length) lines.push("No calendar events in this period.");
+    else for (const event of events) {
+      const when = event.allDay || /^\d{4}-\d{2}-\d{2}$/.test(String(event.start || ""))
+        ? "All day " + String(event.start || "").slice(0, 10) : formatManila(event.start);
+      lines.push("• " + when + " — " + String(event.title || "(Untitled event)") +
+        (event.location ? " (" + String(event.location).slice(0, 80) + ")" : ""));
+    }
+  }
+  const reminders = reminderRows.results || [];
+  lines.push("", "JARVIS REMINDERS");
+  if (!reminders.length) lines.push("No JARVIS reminders in this period.");
+  else for (const item of reminders) lines.push("• #" + item.id + " " + formatManila(item.due_at) + " — " + item.task);
+  await sendText(env, chatId, lines.join("\n"));
+}
+
+async function queueCalendarAction(env, chatId, action, payload, meta = {}) {
+  if (!env.GOOGLE_CALENDAR_WEBAPP_URL || !env.GOOGLE_CALENDAR_SHARED_SECRET) {
+    await sendText(env, chatId, "📅 Google Calendar is not connected. Nothing was changed.");
+    return;
+  }
+  const code = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
+  const now = new Date();
+  await env.DB.prepare(
+    "INSERT INTO pending_calendar_actions (confirmation_code, chat_id, action, event_id, expected_title, expected_start, payload_json, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).bind(code, String(chatId), action, meta.eventId || null, meta.expectedTitle || null,
+    meta.expectedStart || null, JSON.stringify(payload), now.toISOString(),
+    new Date(now.getTime() + 10 * 60 * 1000).toISOString()).run();
+  const duration = Math.max(1, Math.round((new Date(payload.end).getTime() - new Date(payload.start).getTime()) / 60000));
+  await sendText(env, chatId,
+    "📝 GOOGLE CALENDAR — " + (action === "create_event" ? "ADD THIS EVENT" : "MOVE THIS EVENT") +
+    "\nTitle: " + String(payload.title || meta.expectedTitle || "Calendar event") +
+    "\nNew time: " + formatManila(payload.start) +
+    "\nDuration: " + duration + " minutes" +
+    "\n\nNothing has been changed yet." +
+    "\nReply: confirm " + code + "\nOr: cancel " + code +
+    "\n\nThis code expires in 10 minutes.");
+}
+
+async function confirmCalendarAction(env, chatId, raw) {
+  const match = /^confirm\s+([A-F0-9]{8})$/i.exec(raw.trim());
+  if (!match) return;
+  const code = match[1].toUpperCase(), now = new Date().toISOString();
+  const pending = await env.DB.prepare(
+    "SELECT action, event_id, expected_title, expected_start, payload_json FROM pending_calendar_actions WHERE confirmation_code = ? AND chat_id = ? AND expires_at > ? AND consumed_at IS NULL"
+  ).bind(code, String(chatId), now).first();
+  if (!pending) { await sendText(env, chatId, "That Calendar confirmation is invalid, expired, or already used. Nothing was changed."); return; }
+  let payload;
+  try { payload = JSON.parse(pending.payload_json); }
+  catch { await sendText(env, chatId, "I couldn't read that Calendar preview. Nothing was changed. Please create the request again."); return; }
+  const consumed = await env.DB.prepare(
+    "UPDATE pending_calendar_actions SET consumed_at = ? WHERE confirmation_code = ? AND chat_id = ? AND consumed_at IS NULL AND expires_at > ?"
+  ).bind(now, code, String(chatId), now).run();
+  if (!consumed.meta?.changes) { await sendText(env, chatId, "That confirmation was already used or expired. Nothing was changed again."); return; }
+  const request = pending.action === "create_event"
+    ? { action: "create_event", title: payload.title, start: payload.start, end: payload.end, popupReminderMinutes: payload.popupReminderMinutes }
+    : { action: "update_event", eventId: pending.event_id, expectedTitle: pending.expected_title,
+        expectedStart: pending.expected_start, title: payload.title || "", start: payload.start, end: payload.end };
+  const result = await callGoogleCalendar(env, request);
+  if (!result.ok) {
+    await sendText(env, chatId, "📅 Google Calendar did not confirm the change: " + String(result.error || "unknown error") +
+      "\nThe confirmation has been used to prevent duplicate changes. Check your Calendar before trying again.");
+    return;
+  }
+  const event = result.event || {};
+  await sendText(env, chatId, "✅ Google Calendar updated.\nTitle: " +
+    String(event.title || payload.title || pending.expected_title || "Calendar event") +
+    "\nWhen: " + formatManila(event.start || payload.start));
+}
+
+async function cancelCalendarAction(env, chatId, raw) {
+  const match = /^(?:cancel|never mind|nevermind)\s+([A-F0-9]{8})$/i.exec(raw.trim());
+  if (!match) return;
+  const result = await env.DB.prepare(
+    "UPDATE pending_calendar_actions SET consumed_at = ? WHERE confirmation_code = ? AND chat_id = ? AND consumed_at IS NULL"
+  ).bind(new Date().toISOString(), match[1].toUpperCase(), String(chatId)).run();
+  await sendText(env, chatId, result.meta?.changes
+    ? "✅ Calendar change cancelled. Nothing was changed."
+    : "That Calendar confirmation was not found or was already used. Nothing was changed.");
+}
+
+async function prepareCalendarDeletion(env, chatId, query) {
+  if (query.length < 2 || query.length > 100) {
+    await sendText(env, chatId, "Tell me the event title to cancel, for example: cancel my dentist appointment.");
+    return;
+  }
+  const result = await callGoogleCalendar(env, { action: "search_events", query });
+  if (!result.ok) {
+    await sendText(env, chatId, result.setupMissing
+      ? "📅 Google Calendar is not connected. Nothing was deleted."
+      : "📅 I couldn't search Google Calendar: " + result.error);
+    return;
+  }
+  const events = (result.events || []).slice(0, 5);
+  if (!events.length) { await sendText(env, chatId, "🔎 I couldn't find a matching Google Calendar event. Nothing was deleted. Try a more specific event title."); return; }
+  if (events.length > 1) {
+    const lines = events.map(event => {
+      const when = event.allDay || /^\d{4}-\d{2}-\d{2}$/.test(String(event.start || ""))
+        ? "All day " + String(event.start || "").slice(0, 10) : formatManila(event.start);
+      return "• " + String(event.title || "(Untitled event)") + " — " + when;
+    });
+    await sendText(env, chatId, "I found several matching events. Nothing was deleted. Please repeat the request with a more specific title.\n\n" + lines.join("\n"));
+    return;
+  }
+  const event = events[0];
+  if (!event.id || !event.start) { await sendText(env, chatId, "I found a calendar result but couldn't prepare a safe confirmation. Nothing was deleted."); return; }
+  const now = new Date(), code = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
+  const title = String(event.title || "(Untitled event)").slice(0, 160), start = String(event.start);
+  await env.DB.prepare(
+    "INSERT INTO pending_calendar_deletions (confirmation_code, chat_id, event_id, event_title, event_start, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).bind(code, String(chatId), String(event.id), title, start, now.toISOString(),
+    new Date(now.getTime() + 10 * 60 * 1000).toISOString()).run();
+  const when = event.allDay || /^\d{4}-\d{2}-\d{2}$/.test(start) ? "All day " + start.slice(0, 10) : formatManila(start);
+  await sendText(env, chatId, "🗑️ CANCEL GOOGLE CALENDAR EVENT?\nTitle: " + title + "\nWhen: " + when +
+    "\n\nNothing has been deleted. Confirm with: confirmdelete " + code + "\nThis code expires in 10 minutes.");
+}
+
+async function handleNaturalCalendarIntent(env, chatId, raw, intent) {
+  if (intent.kind === "list") { await showCalendarAndReminders(env, chatId, intent.range || "week"); return; }
+  if (intent.kind === "create") {
+    const parsed = parseCalendarEventRequest(raw);
+    if (!parsed.ok) {
+      const detail = parsed.needsClarification ? parsed.error
+        : parsed.missing === "date" ? "What date should I put it on?"
+        : parsed.missing === "time" ? "What time should I put it at?" : parsed.error;
+      await sendText(env, chatId, "📅 I need one more detail before I can prepare that event. " + detail + "\nNothing has been added.");
+      return;
+    }
+    await queueCalendarAction(env, chatId, "create_event", { title: parsed.title, start: parsed.start, end: parsed.end });
+    return;
+  }
+  if (intent.kind === "move") {
+    const parsed = parseCalendarMoveRequest(raw);
+    if (!parsed.ok) {
+      const detail = parsed.needsClarification ? parsed.error
+        : parsed.missing === "date" ? "Which date should I move it to?"
+        : parsed.missing === "time" ? "What time should I move it to?" : parsed.error;
+      await sendText(env, chatId, "📅 I need one more detail to move that event. " + detail + "\nNothing has been changed.");
+      return;
+    }
+    const found = await callGoogleCalendar(env, { action: "search_events", query: parsed.query });
+    if (!found.ok) { await sendText(env, chatId, found.setupMissing ? "Google Calendar is not connected. Nothing was changed." : "I couldn't search Google Calendar: " + found.error); return; }
+    const events = found.events || [];
+    if (events.length !== 1) {
+      await sendText(env, chatId, events.length
+        ? "I found more than one matching event. Nothing was changed. Please include a more specific event title."
+        : "I couldn't find that event in Google Calendar. Nothing was changed. Check the title and try again.");
+      return;
+    }
+    const event = events[0];
+    if (!event.id || !event.start || !event.end || event.allDay || /^\d{4}-\d{2}-\d{2}$/.test(String(event.start))) {
+      await sendText(env, chatId, "I found the event, but it is all-day or missing its time details. I won't move it automatically.");
+      return;
+    }
+    const duration = Math.max(5 * 60000, new Date(event.end).getTime() - new Date(event.start).getTime());
+    const start = new Date(parsed.start);
+    await queueCalendarAction(env, chatId, "update_event", {
+      title: "", start: start.toISOString(), end: new Date(start.getTime() + duration).toISOString()
+    }, { eventId: event.id, expectedTitle: String(event.title || "(Untitled event)"), expectedStart: String(event.start) });
+    return;
+  }
+  if (intent.kind === "delete") await prepareCalendarDeletion(env, chatId, calendarDeleteQuery(raw));
 }
 
 async function callGoogleCalendar(env, payload) {
@@ -2609,6 +2806,9 @@ async function handleSalesCommand(env, chatId, raw) {
 
 function isCloudCommand(message) {
   const text = (message.text || "").trim().toLowerCase();
+  if (classifyCalendarRequest(message.text || "") ||
+      /^confirm\s+[A-F0-9]{8}$/i.test(text) ||
+      /^(?:cancel|never mind|nevermind)\s+[A-F0-9]{8}$/i.test(text)) return true;
   const naturalList = /^(?:show|list)(?: me)? (?:my )?(?:(?:upcoming|scheduled) )?reminders\??$/.test(text) ||
     /^what reminders (?:do i have|are scheduled)(?: for (?:today|tomorrow))?\??$/.test(text);
   const naturalCancel = /^(?:cancel|delete|remove)\s+(?:my\s+)?(?:reminder\s+)?#?\d+$/i.test(text);
@@ -2661,6 +2861,19 @@ async function handleMessage(env, message) {
     await handleReminderRequest(env, chatId, raw);
     return;
   }
+  const calendarIntent = classifyCalendarRequest(raw);
+  if (calendarIntent) {
+    await handleNaturalCalendarIntent(env, chatId, raw, calendarIntent);
+    return;
+  }
+  if (/^confirm\s+[A-F0-9]{8}$/i.test(raw)) {
+    await confirmCalendarAction(env, chatId, raw);
+    return;
+  }
+  if (/^(?:cancel|never mind|nevermind)\s+[A-F0-9]{8}$/i.test(raw)) {
+    await cancelCalendarAction(env, chatId, raw);
+    return;
+  }
 
   if (text === "/food" || text.startsWith("/food ")) {
     await sendText(env, chatId, "🍽️ The food-order feature is intentionally disabled in this JARVIS deployment. No order was placed.");
@@ -2674,14 +2887,12 @@ async function handleMessage(env, message) {
     await handleOutreachCommand(env, chatId, raw);
     return;
   }
-  if (text === "/schedule" || /what('?s| is) my schedule (?:for )?today\??/.test(text) ||
-      /what do i have today\??/.test(text) || /^(?:what('?s| is) )?(?:on )?(?:my )?schedule today\??$/.test(text)) {
-    await showReminders(env, chatId, true);
+  if (text === "/schedule" || /^(?:what('?s| is) )?(?:on )?(?:my )?schedule today\??$/.test(text)) {
+    await showCalendarAndReminders(env, chatId, "today");
     return;
   }
-  if (/^(?:what('?s| is) )?(?:on )?(?:my )?schedule (?:for )?tomorrow\??$/.test(text) ||
-      /^what reminders (?:do i have|are scheduled) for tomorrow\??$/.test(text)) {
-    await showRemindersForDay(env, chatId, 1);
+  if (/^(?:what('?s| is) )?(?:on )?(?:my )?schedule (?:for )?tomorrow\??$/.test(text)) {
+    await showCalendarAndReminders(env, chatId, "tomorrow");
     return;
   }
   if (text === "/reminders" || text === "show my reminders" || text === "list reminders" ||
@@ -2693,47 +2904,7 @@ async function handleMessage(env, message) {
 
   if (text === "/deleteevent" || text.startsWith("/deleteevent ")) {
     const query = raw.slice("/deleteevent".length).trim();
-    if (query.length < 2 || query.length > 100) {
-      await sendText(env, chatId, "Use: /deleteevent event title\nExample: /deleteevent JARVIS calendar test\nI will show matching events and ask you to confirm before deleting anything.");
-      return;
-    }
-    const result = await callGoogleCalendar(env, { action: "search_events", query: query });
-    if (!result.ok) {
-      await sendText(env, chatId, result.setupMissing
-        ? "📅 Google Calendar isn't connected yet. No event was deleted."
-        : "📅 I couldn't search Google Calendar: " + result.error);
-      return;
-    }
-    const events = (result.events || []).slice(0, 5);
-    if (!events.length) {
-      await sendText(env, chatId, "🔎 I couldn't find a matching event in your Google Calendar. Nothing was deleted. Try /deleteevent followed by more of the event title.");
-      return;
-    }
-
-    const now = new Date();
-    const createdAt = now.toISOString();
-    const expiresAt = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
-    const lines = [];
-    for (const event of events) {
-      if (!event.id || !event.start) continue;
-      const code = crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
-      const title = String(event.title || "(Untitled event)").slice(0, 160);
-      const start = String(event.start);
-      await env.DB.prepare(
-        "INSERT INTO pending_calendar_deletions (confirmation_code, chat_id, event_id, event_title, event_start, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
-      ).bind(code, chatId, String(event.id), title, start, createdAt, expiresAt).run();
-      const when = event.allDay || /^\d{4}-\d{2}-\d{2}$/.test(start)
-        ? "All day " + start.slice(0, 10)
-        : formatManila(start);
-      lines.push("• " + title + "\n  When: " + when + "\n  Confirm this exact event with: /confirmdelete " + code);
-    }
-    if (!lines.length) {
-      await sendText(env, chatId, "I found a calendar result but couldn't prepare a safe confirmation. Nothing was deleted.");
-      return;
-    }
-    await sendText(env, chatId,
-      "🔎 MATCHING GOOGLE CALENDAR EVENTS\n\n" + lines.join("\n\n") +
-      "\n\n⚠️ Nothing has been deleted. Confirmation codes expire in 10 minutes. Use /canceldelete CODE to cancel a code.");
+    await prepareCalendarDeletion(env, chatId, query);
     return;
   }
 
