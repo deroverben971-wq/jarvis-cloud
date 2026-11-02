@@ -3132,6 +3132,17 @@ async function handleMessage(env, message) {
     return;
   }
 
+  // Exact confirmation tokens are intentionally deterministic and must not be
+  // interpreted as ordinary chat by the AI planner.
+  if (/^confirm\s+[A-F0-9]{8}$/i.test(raw)) {
+    await confirmCalendarAction(env, chatId, raw);
+    return;
+  }
+  if (/^(?:cancel|never mind|nevermind)\s+[A-F0-9]{8}$/i.test(raw)) {
+    await cancelCalendarAction(env, chatId, raw);
+    return;
+  }
+
   // Resolve a short follow-up to an active clarification before planning a new intent.
   if (await handlePendingReminderClarification(env, chatId, raw)) return;
   if (await handlePendingCalendarClarification(env, chatId, raw)) return;
