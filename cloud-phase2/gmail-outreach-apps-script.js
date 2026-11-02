@@ -22,7 +22,7 @@ function doPost(e) {
     if (action === "capabilities") return jsonOutput_({ ok: true, capabilities: { sendIdempotency: true } });
     if (action === "profile") {
       const profile = Gmail.Users.getProfile("me");
-      return jsonOutput_({ ok: true, emailAddress: String(profile.emailAddress || "") });
+      return jsonOutput_({ ok: true, emailAddress: String(profile.emailAddress || ""), capabilities: { sendIdempotency: true } });
     }
     if (action === "send_email") return sendInitialEmail_(body);
     if (action === "send_followup") return sendFollowup_(body);
