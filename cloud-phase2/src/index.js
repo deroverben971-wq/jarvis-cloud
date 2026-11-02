@@ -7,7 +7,7 @@ import { buildSalesScriptMessages, parseSalesScriptResult, renderSalesScript } f
 import { buildSalesMarketMessages, parseSalesMarketResult, renderSalesMarketPlan, inferNAICSSectorsFromProduct } from "./sales-market.mjs";
 import { searchFederalAwardRecipients, renderFederalAwardCandidates } from "./sales-discovery.mjs";
 import { searchUSConstructionCompanies } from "./sales-hunt.mjs";
-import { JARVIS_AGENT_TOOLS, extractToolCalls, nextRecurringDueAt, normalizeReminderIds, parseToolArguments, validateIsoDateTime } from "./agent-tools.mjs";
+import { JARVIS_OLLAMA_TOOLS, extractToolCalls, nextRecurringDueAt, normalizeReminderIds, parseToolArguments, validateIsoDateTime } from "./agent-tools.mjs";
 
 const HELP = [
   "🤖 JARVIS CLOUD — PHASE 2",
@@ -3243,7 +3243,7 @@ async function handleAIIntent(env, message, updateId) {
     for (let turn = 0; turn < 5; turn++) {
       const result = await env.AI.run(CLOUD_AI_MODEL, {
         messages,
-        tools: JARVIS_AGENT_TOOLS,
+        tools: JARVIS_OLLAMA_TOOLS,
         tool_choice: "auto",
         parallel_tool_calls: false,
         max_completion_tokens: 900,
@@ -3257,9 +3257,17 @@ async function handleAIIntent(env, message, updateId) {
         break;
       }
 
+      const assistantMessage = result?.message || result?.response?.message ||
+        result?.choices?.[0]?.message || {};
       messages.push({
         role: "assistant",
-        content: JSON.stringify(calls.length === 1 ? calls[0] : calls)
+        content: String(assistantMessage.content || ""),
+        tool_calls: Array.isArray(assistantMessage.tool_calls) && assistantMessage.tool_calls.length
+          ? assistantMessage.tool_calls
+          : calls.map(call => ({
+              type: "function",
+              function: { name: call.name, arguments: parseToolArguments(call.arguments) }
+            }))
       });
       for (const call of calls.slice(0, 3)) {
         if (toolsExecuted >= 8) throw new Error("The assistant reached its safe tool-call limit for this message.");
