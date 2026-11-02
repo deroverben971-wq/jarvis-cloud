@@ -2808,6 +2808,8 @@ function isCloudCommand(message) {
   const text = (message.text || "").trim().toLowerCase();
   if (classifyCalendarRequest(message.text || "") ||
       /^confirm\s+[A-F0-9]{8}$/i.test(text) ||
+      /^confirmdelete\s+[A-F0-9]{8}$/i.test(text) ||
+      /^canceldelete\s+[A-F0-9]{8}$/i.test(text) ||
       /^(?:cancel|never mind|nevermind)\s+[A-F0-9]{8}$/i.test(text)) return true;
   const naturalList = /^(?:show|list)(?: me)? (?:my )?(?:(?:upcoming|scheduled) )?reminders\??$/.test(text) ||
     /^what reminders (?:do i have|are scheduled)(?: for (?:today|tomorrow))?\??$/.test(text);
@@ -2908,7 +2910,8 @@ async function handleMessage(env, message) {
     return;
   }
 
-  if (text === "/confirmdelete" || text.startsWith("/confirmdelete ")) {
+  if (text === "/confirmdelete" || text.startsWith("/confirmdelete ") ||
+      text === "confirmdelete" || text.startsWith("confirmdelete ")) {
     const match = /^\/confirmdelete\s+([A-F0-9]{8})$/i.exec(raw);
     if (!match) {
       await sendText(env, chatId, "Use /confirmdelete CODE exactly as shown in the event match message. This deletes that one event only.");
@@ -2944,7 +2947,8 @@ async function handleMessage(env, message) {
     return;
   }
 
-  if (text === "/canceldelete" || text.startsWith("/canceldelete ")) {
+  if (text === "/canceldelete" || text.startsWith("/canceldelete ") ||
+      text === "canceldelete" || text.startsWith("canceldelete ")) {
     const match = /^\/canceldelete\s+([A-F0-9]{8})$/i.exec(raw);
     if (!match) {
       await sendText(env, chatId, "Use /canceldelete CODE to cancel a pending deletion confirmation.");
