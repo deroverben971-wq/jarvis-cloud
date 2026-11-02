@@ -4,10 +4,27 @@ const WEEKDAYS = {
   thursday: 4, friday: 5, saturday: 6
 };
 
-export function isReminderRequest(value) {
+function getReminderLead(value) {
   const text = String(value || "").trim();
-  return /^\/(?:reminder|remind)(?:\s+me)?(?:\s|$)/i.test(text) ||
-    /^remind\s+me(?:\s|$)/i.test(text);
+  const leads = [
+    /^\/(?:reminder|remind)(?:\s+me)?(?:\s+|$)/i,
+    /^remind\s+me(?:\s+|$)/i,
+    /^(?:please\s+)?(?:set|create|make|add|schedule)\s+(?:me\s+)?(?:a\s+)?(?:(meeting|appointment|call)\s+)?reminder\b(?:\s+|$)/i,
+    /^(?:please\s+)?give\s+me\s+(?:a\s+)?(?:(meeting|appointment|call)\s+)?reminder\b(?:\s+|$)/i,
+    /^(?:please\s+)?(?:i need|i want)\s+(?:a\s+)?(?:(meeting|appointment|call)\s+)?reminder\b(?:\s+|$)/i,
+    /^reminder(?:\s+|$)/i
+  ];
+  for (const pattern of leads) {
+    const match = pattern.exec(text);
+    if (match) {
+      return { rest: text.slice(match[0].length).trim(), taskHint: match[1] ? match[1].toLowerCase() : "" };
+    }
+  }
+  return null;
+}
+
+export function isReminderRequest(value) {
+  return getReminderLead(value) !== null;
 }
 
 function localDateParts(date) {
@@ -57,7 +74,7 @@ function stripSpans(text, spans) {
     output = output.slice(0, span.start) + " " + output.slice(span.end);
   }
   return output
-    .replace(/^\s*(?:(?:at|on|to|please)\b[\s,:;-]*)+/i, "")
+    .replace(/^\s*(?:(?:at|on|to|for|about|please)\b[\s,:;-]*)+/i, "")
     .replace(/^[\s,;:.-]+|[\s,;:.-]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -87,14 +104,11 @@ function resultForDue(due, task, now) {
  */
 export function parseReminderRequest(raw, now = new Date()) {
   const original = String(raw || "").trim();
-  if (!isReminderRequest(original)) {
-    return { ok: false, error: "Start the request with /reminder or 'remind me'." };
+  const lead = getReminderLead(original);
+  if (!lead) {
+    return { ok: false, error: "Start with a reminder request such as 'remind me tomorrow at 8 AM'." };
   }
-
-  let rest = original
-    .replace(/^\/(?:reminder|remind)(?:\s+me)?(?:\s+|$)/i, "")
-    .replace(/^remind\s+me(?:\s+|$)/i, "")
-    .trim();
+  const rest = lead.rest;
   if (!rest) return { ok: false, error: "Tell me the date, time, and task." };
 
   // Keep the established exact format working.
@@ -103,7 +117,8 @@ export function parseReminderRequest(raw, now = new Date()) {
     const time = explicit[2].padStart(5, "0");
     const due = manilaInputToUtc(explicit[1], time);
     if (!due) return { ok: false, error: "The date or 24-hour time is invalid." };
-    const taskResult = taskFromText(explicit[3], []);
+    let taskResult = taskFromText(explicit[3], []);
+    if (!taskResult.ok && lead.taskHint) taskResult = { ok: true, task: lead.taskHint };
     if (!taskResult.ok) return taskResult;
     return resultForDue(due, taskResult.task, now);
   }
@@ -116,7 +131,8 @@ export function parseReminderRequest(raw, now = new Date()) {
     if (!Number.isInteger(amount) || amount < 1 || amount * unit > 10080) {
       return { ok: false, error: "Choose a reminder between 1 minute and 7 days from now." };
     }
-    const taskResult = taskFromText(rest, [{ start: relative.index, end: relative.index + relative[0].length }]);
+    let taskResult = taskFromText(rest, [{ start: relative.index, end: relative.index + relative[0].length }]);
+    if (!taskResult.ok && lead.taskHint) taskResult = { ok: true, task: lead.taskHint };
     if (!taskResult.ok) return taskResult;
     return resultForDue(new Date(now.getTime() + amount * unit * 60000), taskResult.task, now);
   }
@@ -133,10 +149,25 @@ export function parseReminderRequest(raw, now = new Date()) {
   } else {
     timeMatch = /\b([01]?\d|2[0-3]):([0-5]\d)\b/.exec(rest);
     if (!timeMatch) {
+      const bareHour = /\bat\s+(0?[1-9]|1[0-2])\b/i.exec(rest);
+      if (bareHour) {
+        return {
+          ok: false,
+          needsClarification: true,
+          error: "Do you mean " + bareHour[1] + ":00 AM or " + bareHour[1] + ":00 PM? Please resend the reminder with AM or PM."
+        };
+      }
       return { ok: false, error: "I need a time such as 8:00 AM or 20:00." };
     }
     hour = Number(timeMatch[1]);
     minute = Number(timeMatch[2]);
+    if (hour >= 1 && hour <= 12 && !/^0\d$/.test(timeMatch[1])) {
+      return {
+        ok: false,
+        needsClarification: true,
+        error: "Do you mean " + timeMatch[0] + " AM or PM? Please resend the reminder with AM or PM."
+      };
+    }
   }
 
   const nowParts = localDateParts(now);
@@ -182,7 +213,8 @@ export function parseReminderRequest(raw, now = new Date()) {
     due = manilaInputToUtc(formatDateParts(target), timeText);
   }
 
-  const taskResult = taskFromText(rest, spans);
+  let taskResult = taskFromText(rest, spans);
+  if (!taskResult.ok && lead.taskHint) taskResult = { ok: true, task: lead.taskHint };
   if (!taskResult.ok) return taskResult;
   return resultForDue(due, taskResult.task, now);
 }
