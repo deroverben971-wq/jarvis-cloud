@@ -205,6 +205,30 @@ test("follow-up sends use the same idempotency protection", () => {
 });
 
 
+
+test("follow-up validator rejects actual newline characters but accepts ordinary r and n letters", () => {
+  const bridge = createBridge();
+  const valid = {
+    idempotencyKey: "jarvis:chat-123:campaign-7:prospect-43:followup-1",
+    to: "opted-in@example.com",
+    subject: "Re: Your requested update",
+    body: "Following up once.",
+    threadId: "thread-existing",
+    inReplyToMessageId: "<prior-message@mail.example>"
+  };
+  const accepted = bridge.parse(bridge.context.sendFollowup_(valid));
+  const rejected = bridge.parse(bridge.context.sendFollowup_({
+    ...valid,
+    idempotencyKey: "jarvis:chat-123:campaign-7:prospect-44:followup-1",
+    inReplyToMessageId: "<prior-message@mail.example>\\nInjected: value"
+  }));
+
+  assert.equal(accepted.ok, true);
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.error, /invalid follow-up details/i);
+  assert.equal(bridge.calls(), 1);
+});
+
 test("the authenticated bridge advertises duplicate-send protection to the Worker", () => {
   const bridge = createBridge();
   bridge.setScriptProperty("JARVIS_GMAIL_SHARED_SECRET", "test-shared-secret");
