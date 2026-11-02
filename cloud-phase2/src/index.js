@@ -287,11 +287,11 @@ async function showReminders(env, chatId, todayOnly = false) {
     const tomorrowUtc = new Date(Date.UTC(p.year, p.month - 1, p.day + 1, -8, 0)).toISOString();
     const todayUtc = new Date(Date.UTC(p.year, p.month - 1, p.day, -8, 0)).toISOString();
     rows = await env.DB.prepare(
-      "SELECT id, task, due_at FROM reminders WHERE chat_id = ? AND sent_at IS NULL AND cancelled_at IS NULL AND due_at >= ? AND due_at < ? ORDER BY due_at LIMIT 30"
+      "SELECT id, task, due_at, recurrence, recurrence_end_at FROM reminders WHERE chat_id = ? AND sent_at IS NULL AND cancelled_at IS NULL AND due_at >= ? AND due_at < ? ORDER BY due_at LIMIT 30"
     ).bind(String(chatId), todayUtc, tomorrowUtc).all();
   } else {
     rows = await env.DB.prepare(
-      "SELECT id, task, due_at FROM reminders WHERE chat_id = ? AND sent_at IS NULL AND cancelled_at IS NULL AND due_at >= ? ORDER BY due_at LIMIT 30"
+      "SELECT id, task, due_at, recurrence, recurrence_end_at FROM reminders WHERE chat_id = ? AND sent_at IS NULL AND cancelled_at IS NULL AND due_at >= ? ORDER BY due_at LIMIT 30"
     ).bind(String(chatId), nowIso).all();
   }
   const items = rows.results || [];
@@ -300,7 +300,7 @@ async function showReminders(env, chatId, todayOnly = false) {
     return;
   }
   const heading = todayOnly ? "📅 YOUR SCHEDULE TODAY" : "🗒️ UPCOMING REMINDERS";
-  const lines = items.map(r => "#" + r.id + " · " + formatManila(r.due_at) + "\n   " + r.task);
+  const lines = items.map(r => "#" + r.id + " · " + formatManila(r.due_at) + (r.recurrence && r.recurrence !== "none" ? " · repeats " + r.recurrence : "") + "\n   " + r.task);
   await sendText(env, chatId, heading + "\n\n" + lines.join("\n\n"));
 }
 
@@ -318,7 +318,7 @@ async function showRemindersForDay(env, chatId, dayOffset) {
     await sendText(env, chatId, "📅 You have no JARVIS reminders for " + label.toLowerCase() + ".");
     return;
   }
-  const lines = items.map(r => "#" + r.id + " · " + formatManila(r.due_at) + "\n   " + r.task);
+  const lines = items.map(r => "#" + r.id + " · " + formatManila(r.due_at) + (r.recurrence && r.recurrence !== "none" ? " · repeats " + r.recurrence : "") + "\n   " + r.task);
   await sendText(env, chatId, "📅 YOUR REMINDERS FOR " + label + "\n\n" + lines.join("\n\n"));
 }
 
@@ -362,7 +362,7 @@ async function showCalendarAndReminders(env, chatId, range = "week") {
   const reminders = reminderRows.results || [];
   lines.push("", "JARVIS REMINDERS");
   if (!reminders.length) lines.push("No JARVIS reminders in this period.");
-  else for (const item of reminders) lines.push("• #" + item.id + " " + formatManila(item.due_at) + " — " + item.task);
+  else for (const item of reminders) lines.push("• #" + item.id + " " + formatManila(item.due_at) + (item.recurrence && item.recurrence !== "none" ? " · repeats " + item.recurrence : "") + " — " + item.task);
   await sendText(env, chatId, lines.join("\n"));
 }
 
