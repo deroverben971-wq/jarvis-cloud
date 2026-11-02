@@ -33,6 +33,8 @@ Before deploying, ensure all earlier D1 migrations for this existing database ha
 
 Keep the existing Telegram webhook and all current secret values. The Calendar Apps Script bridge is updated separately; update its code from `google-calendar-apps-script.js` and deploy a new Web App version before deploying the Worker so exact date-range reads and verified event moves are supported.
 
+For an already-connected Calendar project, do not create a second project or change the shared secret: open the existing Apps Script project, replace `Code.gs` with the current `cloud-phase2/google-calendar-apps-script.js`, save, then choose **Deploy → Manage deployments → Edit** on the existing Web App deployment, select **New version**, and deploy. Keep the existing `/exec` URL and Cloudflare Calendar URL/secret unchanged.
+
 ## Manual Cloudflare deployment from GitHub Actions
 
 The repository includes a manual, guarded deployment workflow at `.github/workflows/deploy-cloud-phase2.yml`. It does not deploy on pushes or pull requests. To enable it:
