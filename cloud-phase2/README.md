@@ -19,7 +19,7 @@ Reminder and Calendar intents are parsed and routed before normal AI chat, so a 
 - /schedule — combined Google Calendar events and JARVIS reminders for today. “What’s my schedule tomorrow?” shows both for tomorrow.
 - /reminders — list upcoming JARVIS reminders.
 - /remind YYYY-MM-DD HH:MM task — free Telegram reminder (Manila time).
-- /reminder tomorrow 8:00 am task — natural-language reminder alias; also supports “remind me tomorrow at 8 AM to ...” and “remind me in 15 minutes to ...”. JARVIS confirms only after the D1 insert succeeds.
+- /reminder tomorrow 8:00 am task — natural-language reminder alias; also supports greetings and polite phrases such as “Hey Jarvis, could you remind me today at 3:30 PM to ...”, “remind me tomorrow at 8 AM to ...”, and “remind me in 15 minutes to ...”. If AM/PM is unclear, JARVIS asks and accepts a one-word AM/PM reply for 10 minutes. It confirms only after the D1 insert succeeds.
 - A daily schedule summary is sent around 7:00 AM Manila time by the Cloudflare Worker when its Cron Trigger is active; it includes outstanding reminders scheduled for that day and Calendar events for today if the Calendar bridge is connected. Delivery state is tracked once per chat/date in D1.
 - `/status` — check the live Worker, D1 reminders query, Calendar read access, Gmail sender identity, and local-bridge secret configuration. It cannot prove the PC is online or inspect whether a production Cron Trigger is enabled.
 - /remindcall YYYY-MM-DD HH:MM task — create a JARVIS reminder that also requests a phone call when due. Requires optional voice-provider configuration; disabled unless fully configured.
