@@ -43,7 +43,8 @@ function removeSpans(value, spans) {
   for (const span of [...spans].sort((a, b) => b.start - a.start)) {
     output = output.slice(0, span.start) + " " + output.slice(span.end);
   }
-  return output.replace(/\b(?:to|on|at|for|in|my)\s*$/i, "")
+  return output.replace(/[?!.]+\s*$/g, "")
+    .replace(/\b(?:to|on|at|for|in|my)\s*$/i, "")
     .replace(/^\s*(?:on|at|to|for|please)\b[\s,:;-]*/i, "")
     .replace(/\s+(?:on|at|to|for|in)\s*$/i, "")
     .replace(/\b(?:in|on)\s+my\s+calendar\b/ig, "")
