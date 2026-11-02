@@ -97,6 +97,12 @@ function createBridge(options = {}) {
               }
             };
           }
+        },
+        Threads: {
+          get(_user, threadId, options) {
+            context.lastThreadRead = { threadId, options };
+            return { messages: context.threadMessages || [] };
+          }
         }
       }
     }
@@ -108,6 +114,8 @@ function createBridge(options = {}) {
     setOnSend(callback) { onSend = callback; },
     setThrowAfterSend(value) { throwAfterSend = value; },
     setScriptProperty(key, value) { properties.set(key, String(value)); },
+    setThreadMessages(messages) { context.threadMessages = messages; },
+    lastThreadRead: () => context.lastThreadRead,
     parse(output) { return JSON.parse(output.getContent()); }
   };
 }
@@ -246,6 +254,45 @@ test("the authenticated bridge advertises duplicate-send protection to the Worke
   assert.equal(result.capabilities.sendIdempotency, true);
 });
 
+
+test("reply checker reads headers only, ignores the sender's own messages, and detects a later external reply", () => {
+  const bridge = createBridge();
+  const afterMs = Date.parse("2026-11-02T01:00:00.000Z");
+  bridge.setThreadMessages([
+    {
+      internalDate: String(afterMs + 1000),
+      payload: { headers: [
+        { name: "From", value: "JARVIS <jarvis@example.com>" },
+        { name: "Subject", value: "JARVIS Gmail self-test" },
+        { name: "Date", value: "Mon, 2 Nov 2026 09:00:01 +0800" },
+        { name: "Message-ID", value: "<self@mail.example>" }
+      ] }
+    },
+    {
+      internalDate: String(afterMs + 5000),
+      payload: { headers: [
+        { name: "From", value: "Tester <tester@example.net>" },
+        { name: "Subject", value: "Re: Approved message" },
+        { name: "Date", value: "Mon, 2 Nov 2026 09:00:05 +0800" },
+        { name: "Message-ID", value: "<reply@mail.example>" }
+      ] }
+    }
+  ]);
+
+  const result = bridge.parse(bridge.context.checkReplies_({
+    threads: [{ threadId: "thread-reply-test", afterMs }]
+  }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.replies.length, 1);
+  assert.equal(result.replies[0].threadId, "thread-reply-test");
+  assert.equal(result.replies[0].from, "Tester <tester@example.net>");
+  assert.equal(result.replies[0].messageId, "<reply@mail.example>");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(bridge.lastThreadRead().options)),
+    { format: "metadata", metadataHeaders: ["From", "Subject", "Date", "Message-ID"] }
+  );
+});
 
 test("the profile check reports whether duplicate-send protection is available", () => {
   const bridge = createBridge();
