@@ -1,7 +1,8 @@
 """
 JARVIS single-bot local bridge.
-Receives normal Telegram messages from Cloudflare and answers with local Ollama.
-Cloudflare handles reminder commands and sends the replies itself.
+Receives natural-language Telegram messages from Cloudflare and sends them to local Ollama.
+Ollama is the primary brain; Cloudflare provides the secure reminder/Calendar/memory tools
+and uses its own AI brain when this local bridge or Ollama is unavailable.
 
 Run alongside Ollama on Windows. This process does NOT use Telegram polling,
 so the same bot token can safely use the Cloudflare webhook.
@@ -10,6 +11,7 @@ import json
 import os
 import sqlite3
 import time
+import threading
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -18,6 +20,10 @@ from pathlib import Path
 BASE_URL = os.getenv("JARVIS_CLOUD_URL", "").strip().rstrip("/")
 BRIDGE_SECRET = os.getenv("JARVIS_BRIDGE_SECRET", "").strip()
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api/chat").strip()
+OLLAMA_TAGS_URL = os.getenv(
+    "OLLAMA_TAGS_URL",
+    OLLAMA_URL.rsplit("/api/chat", 1)[0] + "/api/tags"
+).strip()
 MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b").strip()
 DB_PATH = Path(os.getenv("JARVIS_MEMORY_DB", str(Path.home() / "JARVIS" / "jarvis_memory.db")))
 POLL_SECONDS = 2
@@ -69,6 +75,35 @@ def get_facts(chat_id):
     with connect_db() as db:
         return db.execute("SELECT id, fact FROM facts WHERE chat_id=? ORDER BY id",
                           (int(chat_id),)).fetchall()
+
+def ollama_model_ready():
+    request = urllib.request.Request(OLLAMA_TAGS_URL, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            result = json.loads(response.read().decode("utf-8"))
+        models = result.get("models") or []
+        available = {
+            str(item.get("name") or item.get("model") or "").strip()
+            for item in models
+        }
+        return MODEL in available or (MODEL + ":latest") in available
+    except Exception:
+        return False
+
+
+def heartbeat_loop():
+    while True:
+        try:
+            ready = ollama_model_ready()
+            post_json(
+                BASE_URL + "/bridge/heartbeat",
+                {"model": MODEL, "ready": ready},
+                timeout=10,
+            )
+        except Exception as exc:
+            print(f"Local brain heartbeat issue: {type(exc).__name__}")
+        time.sleep(5)
+
 
 def post_json(url, payload=None, timeout=25):
     data = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -230,6 +265,8 @@ def main():
     print(f"Local SQLite memory: {DB_PATH}")
     print("Cloudflare AI is used as fallback when this bridge is offline.")
     print("Keep this window open to use Ollama as the primary Telegram brain.")
+    heartbeat = threading.Thread(target=heartbeat_loop, daemon=True)
+    heartbeat.start()
     while True:
         try:
             result = post_json(BASE_URL + "/bridge/next")
