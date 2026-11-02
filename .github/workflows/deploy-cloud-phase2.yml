@@ -54,6 +54,7 @@ jobs:
           print("Wrangler configuration checks passed.")
           PY
           node --check cloud-phase2/src/index.js
+          node --check cloud-phase2/src/agent-tools.mjs
           node --check cloud-phase2/src/reminder-parser.mjs
           node --check cloud-phase2/src/calendar-intents.mjs
           node --check cloud-phase2/src/sales-documents.mjs
@@ -83,9 +84,9 @@ jobs:
 
       - name: Production database migration reminder
         run: |
-          echo "Before deployment, apply all pending migrations to the existing jarvis-reminders D1 database in filename order."
-          echo "For this release, apply 20261103_z_calendar_natural_language.sql after the previously applied Sales Intelligence migrations."
-          echo "This workflow validates SQL but does not run remote D1 migrations. Calendar event creation and moves require the new pending-calendar-actions table."
+          echo "D1 migrations are not automatically applied by this workflow; apply pending SQL in filename order before deployment."
+          echo "Confirm 20261103_z_calendar_natural_language.sql is already applied; apply 20261104_recurring_reminders.sql exactly once to the existing jarvis-reminders database."
+          echo "This workflow validates SQL but does not run remote D1 migrations. The recurring-reminders migration adds recurrence columns used by the updated Worker."
       - name: Check Cloudflare credentials are configured
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
