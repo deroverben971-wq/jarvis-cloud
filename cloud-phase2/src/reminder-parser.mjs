@@ -75,7 +75,7 @@ function stripSpans(text, spans) {
   }
   return output
     .replace(/^\s*(?:(?:at|on|to|for|about|please)\b[\s,:;-]*)+/i, "")
-    .replace(/\s+(?:at|on|to|for|about|please)$/i, "")
+    .replace(/\s+(?:at|on|to|for|about|please)\s*$/i, "")
     .replace(/^[\s,;:.-]+|[\s,;:.-]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
