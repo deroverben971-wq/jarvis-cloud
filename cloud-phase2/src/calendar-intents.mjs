@@ -161,14 +161,15 @@ export function classifyCalendarRequest(raw) {
   const text = value.toLowerCase();
   if (!text || /^\/(?:calendar|event|alarm|deleteevent|confirmdelete|canceldelete)\b/i.test(text)) return null;
 
-  if (/^(?:please\s+)?(?:move|reschedule|change)\s+(?:my\s+)?(.+?)\s+(?:to|for)\s+(.+)$/i.test(value)) {
+  if (/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:move|reschedule|change)\s+(?:my\s+)?(.+?)\s+(?:to|for)\s+(.+)$/i.test(value)) {
     return { kind: "move" };
   }
-  if (/^(?:please\s+)?(?:cancel|delete|remove)\s+(?:my\s+)?(?:calendar\s+)?(.+)$/i.test(value) &&
+  if (/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:cancel|delete|remove)\s+(?:my\s+)?(?:calendar\s+)?(.+)$/i.test(value) &&
       !/^(?:reminder|alarm)\b/i.test(value.replace(/^(?:please\s+)?(?:cancel|delete|remove)\s+(?:my\s+)?/i, ""))) {
     return { kind: "delete" };
   }
   if (/^(?:show|list|open|check)(?:\s+me)?\s+(?:my\s+)?(?:google\s+)?calendar(?:\s+events)?(?:\s+(?:today|tomorrow|this week|next week))?\??$/i.test(value) ||
+      /^(?:can|could|would)\s+you\s+(?:please\s+)?(?:show|list|open|check)\s+(?:me\s+)?(?:my\s+)?(?:google\s+)?calendar(?:\s+events)?(?:\s+(?:today|tomorrow|this week|next week))?\??$/i.test(value) ||
       /^(?:what'?s|what is|what are|do i have|show me)\b.*\b(?:calendar|calendar events|events|agenda)\b/i.test(value) ||
       /^(?:what'?s|what is)\s+(?:on\s+)?(?:my\s+)?schedule\s+(?:today|tomorrow|this week|next week)\??$/i.test(value) ||
       /^(?:list|show)\s+(?:my\s+)?(?:meetings|appointments)\s+(?:today|tomorrow|this week|next week)\??$/i.test(value) ||
@@ -178,7 +179,7 @@ export function classifyCalendarRequest(raw) {
       : /\btomorrow\b/i.test(text) ? "tomorrow"
       : /\btoday\b/i.test(text) ? "today" : "week" };
   }
-  if (/^(?:please\s+)?(?:i need to\s+|i want to\s+|i'd like to\s+)?(?:schedule|book|add|create|put|set up|arrange)\b/i.test(value) &&
+  if (/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:i need to\s+|i want to\s+|i'd like to\s+)?(?:schedule|book|add|create|put|set up|arrange)\b/i.test(value) &&
       /\b(?:calendar|event|meeting|appointment)\b|\bto my calendar\b|\bon my calendar\b/i.test(value)) {
     return { kind: "create" };
   }
@@ -190,7 +191,7 @@ export function classifyCalendarRequest(raw) {
 
 export function parseCalendarEventRequest(raw, now = new Date()) {
   const original = String(raw || "").trim();
-  let body = original.replace(/^(?:please\s+)?(?:i need to\s+|i want to\s+|i'd like to\s+)?(?:schedule|book|add|create|put|set up|arrange)\s+/i, "");
+  let body = original.replace(/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:i need to\s+|i want to\s+|i'd like to\s+)?(?:schedule|book|add|create|put|set up|arrange)\s+/i, "");
   body = body.replace(/^set\s+(?:me\s+)?(?:a|an)\s+/i, "");
   body = body.replace(/^(?:a|an|the)\s+/i, "");
   const parsed = parseDateTime(body, now);
@@ -227,7 +228,7 @@ export function parseCalendarEventRequest(raw, now = new Date()) {
 }
 
 export function parseCalendarMoveRequest(raw, now = new Date()) {
-  const match = /^(?:please\s+)?(?:move|reschedule|change)\s+(?:my\s+)?(.+?)\s+(?:to|for)\s+(.+)$/i.exec(String(raw || "").trim());
+  const match = /^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:move|reschedule|change)\s+(?:my\s+)?(.+?)\s+(?:to|for)\s+(.+)$/i.exec(String(raw || "").trim());
   if (!match) return { ok: false, error: "Say which event to move and the new date and time." };
   const query = match[1].replace(/^(?:calendar\s+)?(?:event|meeting|appointment)\s+/i, "").trim();
   if (query.length < 2) return { ok: false, error: "Please include the event title so I can find the right calendar entry." };
@@ -238,7 +239,7 @@ export function parseCalendarMoveRequest(raw, now = new Date()) {
 
 export function calendarDeleteQuery(raw) {
   let query = String(raw || "").trim()
-    .replace(/^(?:please\s+)?(?:cancel|delete|remove)\s+(?:my\s+)?/i, "")
+    .replace(/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:cancel|delete|remove)\s+(?:my\s+)?/i, "")
     .replace(/^(?:calendar\s+)?(?:event|meeting|appointment)\s+/i, "")
     .replace(/\s+from\s+(?:my\s+)?calendar$/i, "")
     .trim();
