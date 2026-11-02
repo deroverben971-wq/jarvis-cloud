@@ -1124,7 +1124,7 @@ async function handleOutreachCommand(env, chatId, raw) {
       await sendText(env, chatId, "⏸️ Send cancelled because the campaign was paused, permission/review changed, or the contact was suppressed. No email was sent.");
       return;
     }
-    const result = await callGmailBridge(env, { action:"send_email", to:prospect.email, subject:prospect.draft_subject, body:prospect.draft_body });
+    const result = await callGmailBridge(env, { action:"send_email", idempotencyKey:"jarvis:" + chatId + ":" + campaign.id + ":" + id + ":initial", to:prospect.email, subject:prospect.draft_subject, body:prospect.draft_body });
     if (!result.ok) {
       await env.DB.prepare("UPDATE outreach_prospects SET status='needs_review', last_error=?, updated_at=? WHERE id=? AND chat_id=? AND status='sending'")
         .bind(String(result.error || "Gmail send outcome uncertain").slice(0,240), new Date().toISOString(), id, chatId).run();
@@ -1327,7 +1327,7 @@ async function processOutreachScheduled(env, scheduledTime) {
         .bind(new Date().toISOString(),p.id).run();
       continue;
     }
-    const sent = await callGmailBridge(env,{action:"send_email",to:p.email,subject:p.draft_subject,body:p.draft_body});
+    const sent = await callGmailBridge(env,{action:"send_email",idempotencyKey:"jarvis:"+p.chat_id+":"+p.campaign_id+":"+p.id+":initial",to:p.email,subject:p.draft_subject,body:p.draft_body});
     if (!sent.ok) {
       await env.DB.prepare("UPDATE outreach_prospects SET status='needs_review',last_error=?,updated_at=? WHERE id=? AND status='sending'")
         .bind(String(sent.error||"Automatic Gmail send outcome uncertain").slice(0,240),new Date().toISOString(),p.id).run();
@@ -1380,7 +1380,7 @@ async function processOutreachScheduled(env, scheduledTime) {
     const body = "Hi "+greeting+",\n\nI'm following up once on my earlier email about "+String(p.product||"my offer").trim()+
       (company ? " for "+company : "")+
       ". If this may be useful, I'm happy to share more. If it's not relevant, reply 'No thanks' and I won't follow up again.\n\nBest,\n"+String(p.sender_name||"JARVIS user").trim();
-    const sent = await callGmailBridge(env,{action:"send_followup",to:p.email,subject:p.draft_subject,body,threadId:p.gmail_thread_id,inReplyToMessageId:p.last_rfc822_message_id});
+    const sent = await callGmailBridge(env,{action:"send_followup",idempotencyKey:"jarvis:"+p.chat_id+":"+p.campaign_id+":"+p.id+":followup-1",to:p.email,subject:p.draft_subject,body,threadId:p.gmail_thread_id,inReplyToMessageId:p.last_rfc822_message_id});
     if (!sent.ok) {
       await env.DB.prepare("UPDATE outreach_prospects SET status='needs_review',followup_due_at=NULL,last_error=?,updated_at=? WHERE id=? AND status='followup_sending'")
         .bind(String(sent.error||"Follow-up send outcome uncertain").slice(0,240),new Date().toISOString(),p.id).run();
