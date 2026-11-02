@@ -57,8 +57,9 @@ test("parses reschedule targets and event search terms", () => {
 });
 
 test("parses natural event cancellation without confusing reminder cancellation", () => {
-  assert.equal(classifyCalendarRequest("Cancel my dentist appointment"), null); // natural classifier deliberately requires an explicit event descriptor below
-  assert.equal(calendarDeleteQuery("Cancel my meeting with Alex"), "meeting with Alex");
+  assert.deepEqual(classifyCalendarRequest("Cancel my dentist appointment"), {kind:"delete"});
+  assert.equal(calendarDeleteQuery("Cancel my dentist appointment"), "dentist appointment");
+  assert.equal(classifyCalendarRequest("Cancel reminder 3"), null);
 });
 
 test("does not classify reminder requests as calendar creates", () => {
