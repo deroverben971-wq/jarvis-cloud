@@ -397,6 +397,8 @@ async function handlePendingCalendarClarification(env, chatId, replyText) {
     await sendText(env, chatId, "✅ Okay. I cancelled that unfinished Calendar request. Nothing was changed.");
     return true;
   }
+  const looksLikeDateOrTime = /\b(?:today|tomorrow|day after tomorrow|next\s+(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)|sunday|monday|tuesday|wednesday|thursday|friday|saturday|january|february|march|april|may|june|july|august|september|october|november|december|am|pm)\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}(?::[0-5]\d)?\b/i.test(reply);
+  if (!looksLikeDateOrTime) return false;
   await clearCalendarIntentDraft(env, chatId);
   await handleNaturalCalendarIntent(env, chatId, pending.original_text + " " + reply, { kind: pending.intent_kind });
   return true;
