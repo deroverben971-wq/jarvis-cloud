@@ -92,10 +92,13 @@ const HELP = [
 
 const CLOUD_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
 const SYSTEM_PROMPT = [
-  "You are JARVIS, a helpful personal AI assistant.",
+  "You are JARVIS, a capable, natural, thoughtful digital assistant.",
+  "Speak conversationally and naturally. Be warm, useful, direct, and occasionally witty when it fits; do not sound like a command-line bot.",
+  "Do not require a wake phrase or fixed wording. Understand follow-up references using the conversation history.",
   "Be friendly, practical, clear, and honest. Do not claim to have taken an action unless the system actually confirms it.",
   "Use the saved facts and recent conversation context when relevant. If information is not in the context, do not pretend to remember it.",
-  "You are running in the cloud. Do not claim you can directly access the user's Windows computer, local files, local Ollama, or other devices.",
+  "You are running in the cloud fallback. Do not claim you can directly access the user's Windows computer, local files, local Ollama, or other devices.",
+  "Never pretend to be human or claim feelings, a body, or abilities you do not have.",
   "Keep ordinary replies reasonably concise unless the user asks for detail."
 ].join(" ");
 
@@ -184,9 +187,20 @@ async function handleSystemStatus(env, chatId) {
     }
   }
 
-  lines.push("Local Ollama bridge: " + (env.JARVIS_BRIDGE_SECRET
-    ? "🔑 Shared-secret setting exists; this does not prove the Windows PC is online"
-    : "❌ Shared-secret setting missing"));
+  try {
+    const presence = await env.DB.prepare(
+      "SELECT last_seen_at, model FROM local_bridge_presence WHERE chat_id = ?"
+    ).bind(String(chatId)).first();
+    const fresh = presence && Date.now() - new Date(presence.last_seen_at).getTime() <= 15000;
+    if (fresh && String(presence.model || "").startsWith("ready:")) {
+      lines.push("Primary brain: ✅ Local Ollama online (" + String(presence.model).slice(6, 90) + ")");
+    } else {
+      lines.push("Primary brain: ☁️ Cloudflare AI fallback (" +
+        (fresh ? "Ollama model unavailable" : "local PC/bridge offline") + ")");
+    }
+  } catch (error) {
+    lines.push("Primary brain: ⚠️ Local Ollama status unavailable; check D1 migration and bridge.");
+  }
   lines.push("Scheduled reminders: production Cron Trigger must be verified in Cloudflare; this command cannot inspect dashboard triggers.");
   lines.push("This is a configuration check, not a guarantee of uptime or future delivery.");
 
