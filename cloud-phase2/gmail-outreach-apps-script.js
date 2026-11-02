@@ -19,6 +19,7 @@ function doPost(e) {
     }
     const action = String(body.action || "");
     if (action === "ping") return jsonOutput_({ ok: true, service: "JARVIS Gmail outreach bridge" });
+    if (action === "capabilities") return jsonOutput_({ ok: true, capabilities: { sendIdempotency: true } });
     if (action === "profile") {
       const profile = Gmail.Users.getProfile("me");
       return jsonOutput_({ ok: true, emailAddress: String(profile.emailAddress || "") });
