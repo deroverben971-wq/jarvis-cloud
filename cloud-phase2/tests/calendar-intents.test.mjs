@@ -66,3 +66,18 @@ test("does not classify reminder requests as calendar creates", () => {
   assert.equal(classifyCalendarRequest("Remind me tomorrow at 6 PM to call Alex"), null);
   assert.equal(classifyCalendarRequest("Give me a meeting reminder at 6 PM"), null);
 });
+
+
+test("understands polite calendar requests while keeping reminder cancellation separate", () => {
+  assert.deepEqual(classifyCalendarRequest("Can you show my calendar tomorrow?"), {kind:"list",range:"tomorrow"});
+  assert.deepEqual(classifyCalendarRequest("Could you schedule a meeting with Alex tomorrow at 3 PM?"), {kind:"create"});
+  assert.deepEqual(classifyCalendarRequest("Can you move my dentist appointment to Friday at 4 PM?"), {kind:"move"});
+  assert.deepEqual(classifyCalendarRequest("Could you cancel my dentist appointment?"), {kind:"delete"});
+  assert.equal(classifyCalendarRequest("Can you cancel my reminder 3?"), null);
+});
+
+test("parses a polite meeting request and preserves the event title", () => {
+  const result = parseCalendarEventRequest("Can you schedule a meeting with Alex tomorrow at 3 PM?", now);
+  assert.equal(result.ok, true);
+  assert.equal(result.title, "meeting with Alex");
+});
