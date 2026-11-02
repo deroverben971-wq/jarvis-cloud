@@ -3117,7 +3117,7 @@ async function handleAIIntent(env, message, updateId) {
   await handleCloudChat(env, message, updateId);
 }
 
-async function handleMessage(env, message) {
+async function handleMessage(env, message, updateId) {
   const chatId = String(message.chat?.id ?? "");
   if (!chatId || chatId !== String(env.TELEGRAM_CHAT_ID)) return;
   const raw = (message.text || "").trim();
@@ -3149,7 +3149,7 @@ async function handleMessage(env, message) {
 
   // Slash commands remain compatible; all ordinary language is interpreted by the AI brain.
   if (!raw.startsWith("/")) {
-    await handleAIIntent(env, message, message.message_id);
+    await handleAIIntent(env, message, updateId);
     return;
   }
 
@@ -3583,7 +3583,7 @@ export default {
           const reminderFollowup = !!pendingReminder &&
             /^(?:am|pm|cancel|never mind|nevermind|forget it)$/i.test(String(message.text).trim());
           if (isCloudCommand(message) || reminderFollowup) {
-            await handleMessage(env, message);
+            await handleMessage(env, message, update.update_id);
           } else {
             const pendingOutreach = await env.DB.prepare("SELECT * FROM outreach_campaigns WHERE chat_id = ? AND status = 'setup' ORDER BY id DESC LIMIT 1")
               .bind(String(message.chat?.id ?? "")).first();
