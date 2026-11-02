@@ -445,7 +445,11 @@ async function handleNaturalCalendarIntent(env, chatId, raw, intent) {
       const detail = parsed.needsClarification ? parsed.error
         : parsed.missing === "date" ? "What date should I put it on?"
         : parsed.missing === "time" ? "What time should I put it at?" : parsed.error;
-      await sendText(env, chatId, "📅 I need one more detail before I can prepare that event. " + detail + "\nNothing has been added.");
+      if (parsed.missing || parsed.needsClarification) {
+        await saveCalendarIntentDraft(env, chatId, "create", raw, parsed.missing || "time_period");
+      }
+      await sendText(env, chatId, "📅 I need one more detail before I can prepare that event. " + detail +
+        "\nYou can reply with just the missing detail. Say 'cancel' to stop. Nothing has been added.");
       return;
     }
     await queueCalendarAction(env, chatId, "create_event", { title: parsed.title, start: parsed.start, end: parsed.end });
@@ -457,7 +461,11 @@ async function handleNaturalCalendarIntent(env, chatId, raw, intent) {
       const detail = parsed.needsClarification ? parsed.error
         : parsed.missing === "date" ? "Which date should I move it to?"
         : parsed.missing === "time" ? "What time should I move it to?" : parsed.error;
-      await sendText(env, chatId, "📅 I need one more detail to move that event. " + detail + "\nNothing has been changed.");
+      if (parsed.missing || parsed.needsClarification) {
+        await saveCalendarIntentDraft(env, chatId, "move", raw, parsed.missing || "time_period");
+      }
+      await sendText(env, chatId, "📅 I need one more detail to move that event. " + detail +
+        "\nYou can reply with just the missing detail. Say 'cancel' to stop. Nothing has been changed.");
       return;
     }
     const found = await callGoogleCalendar(env, { action: "search_events", query: parsed.query });
@@ -2908,6 +2916,9 @@ async function handleMessage(env, message) {
   }
   if (/^(?:cancel|never mind|nevermind)\s+[A-F0-9]{8}$/i.test(raw)) {
     await cancelCalendarAction(env, chatId, raw);
+    return;
+  }
+  if (await handlePendingCalendarClarification(env, chatId, raw)) {
     return;
   }
 
