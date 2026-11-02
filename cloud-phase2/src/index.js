@@ -3770,8 +3770,9 @@ export default {
             if (pendingOutreach) {
               await handleOutreachSetupInput(env, message, pendingOutreach);
             } else if (env.AI) {
-              // Route ordinary Telegram messages through JARVIS's intent planner.
-              await handleMessage(env, message);
+              // Route ordinary Telegram messages through the AI agent and preserve
+              // the Telegram update ID for safe local-bridge fallback.
+              await handleMessage(env, message, update.update_id);
             } else {
               await enqueueForLocalJarvis(env, message, update.update_id);
             }
