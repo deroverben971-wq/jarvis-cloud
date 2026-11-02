@@ -277,28 +277,6 @@ function buildRawMessage_(to, subject, messageBody, inReplyTo) {
   return Utilities.base64EncodeWebSafe(rawEmail, Utilities.Charset.UTF_8).replace(/=+$/g, "");
 }
 
-function sentMetadata_(sent) {
-  if (!sent || !sent.id || !sent.threadId) {
-    return jsonOutput_({ ok: false, error: "Gmail did not confirm a sent message" });
-  }
-  const message = Gmail.Users.Messages.get("me", sent.id, {
-    format: "metadata",
-    metadataHeaders: ["Message-ID", "Subject", "To", "From", "Date"]
-  });
-  const headers = headersObject_(message.payload && message.payload.headers);
-  const rfc822MessageId = String(headers["message-id"] || "");
-  if (!rfc822MessageId) {
-    return jsonOutput_({ ok: false, error: "Message may have been sent, but Gmail headers were unavailable. Check Sent before retrying." });
-  }
-  return jsonOutput_({
-    ok: true,
-    messageId: String(sent.id),
-    threadId: String(sent.threadId),
-    rfc822MessageId: rfc822MessageId,
-    subject: String(headers.subject || "")
-  });
-}
-
 function checkReplies_(body) {
   const profile = Gmail.Users.getProfile("me");
   const ownEmail = String(profile.emailAddress || "").toLowerCase();
