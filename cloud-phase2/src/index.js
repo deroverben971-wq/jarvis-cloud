@@ -189,13 +189,66 @@ async function handleSystemStatus(env, chatId) {
   await sendText(env, chatId, lines.join("\n"));
 }
 
+async function saveReminderIntentDraft(env, chatId, originalText) {
+  const now = new Date();
+  await env.DB.prepare(
+    "INSERT INTO reminder_intent_drafts (chat_id, original_text, created_at, expires_at) VALUES (?, ?, ?, ?) " +
+    "ON CONFLICT(chat_id) DO UPDATE SET original_text=excluded.original_text, created_at=excluded.created_at, expires_at=excluded.expires_at"
+  ).bind(String(chatId), String(originalText).slice(0, 500), now.toISOString(),
+    new Date(now.getTime() + 10 * 60 * 1000).toISOString()).run();
+}
+
+async function clearReminderIntentDraft(env, chatId) {
+  await env.DB.prepare("DELETE FROM reminder_intent_drafts WHERE chat_id = ?").bind(String(chatId)).run();
+}
+
+async function handlePendingReminderClarification(env, chatId, replyText) {
+  const now = new Date().toISOString();
+  const pending = await env.DB.prepare(
+    "SELECT original_text FROM reminder_intent_drafts WHERE chat_id = ? AND expires_at > ?"
+  ).bind(String(chatId), now).first();
+  if (!pending) {
+    await clearReminderIntentDraft(env, chatId);
+    return false;
+  }
+
+  const reply = String(replyText || "").trim();
+  if (/^(?:cancel|never mind|nevermind|forget it)$/i.test(reply)) {
+    await clearReminderIntentDraft(env, chatId);
+    await sendText(env, chatId, "✅ Okay. I cancelled that unfinished reminder. Nothing was scheduled.");
+    return true;
+  }
+  if (reply.startsWith("/") || isReminderRequest(reply) || classifyCalendarRequest(reply)) return false;
+
+  const meridiem = /^(am|pm)$/i.exec(reply);
+  if (!meridiem) return false;
+  const original = String(pending.original_text);
+  const updated = original.replace(
+    /\b((?:[01]?\d|2[0-3]):[0-5]\d)\b(?!\s*(?:a\.?m\.?|p\.?m\.?))/i,
+    "$1 " + meridiem[1].toUpperCase()
+  );
+  if (updated === original) {
+    await clearReminderIntentDraft(env, chatId);
+    await sendText(env, chatId, "I couldn't match that AM/PM answer to the pending time. Please send the complete reminder again.");
+    return true;
+  }
+  await clearReminderIntentDraft(env, chatId);
+  await handleReminderRequest(env, chatId, updated);
+  return true;
+}
+
 async function handleReminderRequest(env, chatId, raw) {
   const parsed = parseReminderRequest(raw);
   if (!parsed.ok) {
+    if (parsed.needsClarification) {
+      await saveReminderIntentDraft(env, chatId, raw);
+      const question = parsed.error.match(/Do you mean (.+?)\?/)?.[1] || "AM or PM";
+      await sendText(env, chatId,
+        "⏰ Do you mean " + question + "? Nothing has been scheduled yet. Reply just AM or PM within 10 minutes.");
+      return;
+    }
     await sendText(env, chatId,
-      (parsed.needsClarification
-        ? "⏰ Quick question — nothing has been scheduled yet. "
-        : "⏰ I couldn't save that reminder, so nothing has been scheduled. ") + parsed.error +
+      "⏰ I couldn't save that reminder, so nothing has been scheduled. " + parsed.error +
       "\n\nExample: Remind me tomorrow at 8 AM to continue building JARVIS.\nTimes use Asia/Manila (Philippines time).");
     return;
   }
@@ -2906,6 +2959,7 @@ async function handleMessage(env, message) {
   }
   if (isReminderRequest(raw)) {
     await clearCalendarIntentDraft(env, chatId);
+    await clearReminderIntentDraft(env, chatId);
     await handleReminderRequest(env, chatId, raw);
     return;
   }
@@ -2919,7 +2973,11 @@ async function handleMessage(env, message) {
   }  const calendarIntent = classifyCalendarRequest(raw);
   if (calendarIntent) {
     await clearCalendarIntentDraft(env, chatId);
+    await clearReminderIntentDraft(env, chatId);
     await handleNaturalCalendarIntent(env, chatId, raw, calendarIntent);
+    return;
+  }
+  if (await handlePendingReminderClarification(env, chatId, raw)) {
     return;
   }
   if (await handlePendingCalendarClarification(env, chatId, raw)) {
