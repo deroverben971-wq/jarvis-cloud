@@ -229,7 +229,7 @@ async function handlePendingReminderClarification(env, chatId, replyText) {
   // ("at 8"). Only match a bare hour after "at" so dates like 2026-11-02
   // cannot accidentally have their month/day changed by the AM/PM reply.
   const clockPattern = /\b((?:[01]?\d|2[0-3]):[0-5]\d)\b(?!\s*(?:a\.?m\.?|p\.?m\.?))/i;
-  const bareHourPattern = /\bat\s+(0?[1-9]|1[0-2])\b(?!\s*(?:a\.?m\.?|p\.?m\.?))/i;
+  const bareHourPattern = /\bat\s+(0?[1-9]|1[0-2])\b(?!\s*:[0-5]\d)(?!\s*(?:a\.?m\.?|p\.?m\.?))/i;
   let updated;
   if (clockPattern.test(original)) {
     updated = original.replace(clockPattern, "$1" + suffix);
