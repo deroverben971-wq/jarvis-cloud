@@ -79,6 +79,7 @@ function createBridge(options = {}) {
     },
     Gmail: {
       Users: {
+        getProfile() { return { emailAddress: "jarvis@example.com" }; },
         Messages: {
           send() {
             sendCalls += 1;
@@ -218,5 +219,24 @@ test("the authenticated bridge advertises duplicate-send protection to the Worke
   }));
 
   assert.equal(result.ok, true);
+  assert.equal(result.capabilities.sendIdempotency, true);
+});
+
+
+test("the profile check reports whether duplicate-send protection is available", () => {
+  const bridge = createBridge();
+  bridge.setScriptProperty("JARVIS_GMAIL_SHARED_SECRET", "test-shared-secret");
+
+  const result = bridge.parse(bridge.context.doPost({
+    postData: {
+      contents: JSON.stringify({
+        secret: "test-shared-secret",
+        action: "profile"
+      })
+    }
+  }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.emailAddress, "jarvis@example.com");
   assert.equal(result.capabilities.sendIdempotency, true);
 });
