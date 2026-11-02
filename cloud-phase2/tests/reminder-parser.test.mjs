@@ -62,3 +62,44 @@ test("does not classify ordinary messages or optional phone-call commands as rem
   assert.equal(isReminderRequest("hello JARVIS"), false);
   assert.equal(isReminderRequest("/remindcall 2026-10-30 08:00 call me"), false);
 });
+
+
+test("understands common conversational reminder phrases", () => {
+  assert.equal(isReminderRequest("Give me a meeting reminder at 6:00 PM"), true);
+  assert.deepEqual(parseReminderRequest("Give me a meeting reminder at 6:00 PM", now), {
+    ok: true,
+    dueAt: "2026-10-30T10:00:00.000Z",
+    task: "meeting"
+  });
+});
+
+test("understands set/create reminder wording and extracts the task", () => {
+  assert.deepEqual(parseReminderRequest("Set a reminder to review my notes tomorrow at 8 AM", now), {
+    ok: true,
+    dueAt: "2026-10-30T00:00:00.000Z",
+    task: "review my notes"
+  });
+  const meeting = parseReminderRequest("Create a meeting reminder for tomorrow at 18:00", now);
+  assert.equal(meeting.ok, true);
+  assert.equal(meeting.task, "meeting");
+});
+
+test("asks for AM or PM instead of guessing an ambiguous six o'clock time", () => {
+  const result = parseReminderRequest("Give me a meeting reminder at 6:00", now);
+  assert.equal(result.ok, false);
+  assert.equal(result.needsClarification, true);
+  assert.match(result.error, /AM or PM/);
+});
+
+test("still accepts unambiguous 24-hour conversational times", () => {
+  const result = parseReminderRequest("Remind me tomorrow at 20:15 to finish homework", now);
+  assert.equal(result.ok, true);
+  assert.equal(result.dueAt, "2026-10-30T12:15:00.000Z");
+  assert.equal(result.task, "finish homework");
+});
+
+test("uses the meeting or appointment category as the task when no extra text is supplied", () => {
+  const result = parseReminderRequest("Make me an appointment reminder tomorrow at 9 AM", now);
+  assert.equal(result.ok, true);
+  assert.equal(result.task, "appointment");
+});
