@@ -2909,18 +2909,17 @@ async function handleMessage(env, message) {
     await handleReminderRequest(env, chatId, raw);
     return;
   }
-  const calendarIntent = classifyCalendarRequest(raw);
-  if (calendarIntent) {
-    await clearCalendarIntentDraft(env, chatId);
-    await handleNaturalCalendarIntent(env, chatId, raw, calendarIntent);
-    return;
-  }
   if (/^confirm\s+[A-F0-9]{8}$/i.test(raw)) {
     await confirmCalendarAction(env, chatId, raw);
     return;
   }
   if (/^(?:cancel|never mind|nevermind)\s+[A-F0-9]{8}$/i.test(raw)) {
     await cancelCalendarAction(env, chatId, raw);
+    return;
+  }  const calendarIntent = classifyCalendarRequest(raw);
+  if (calendarIntent) {
+    await clearCalendarIntentDraft(env, chatId);
+    await handleNaturalCalendarIntent(env, chatId, raw, calendarIntent);
     return;
   }
   if (await handlePendingCalendarClarification(env, chatId, raw)) {
