@@ -1,6 +1,6 @@
 # JARVIS Cloud
 
-A zero-cost-first Telegram assistant project. The existing Phase 1 morning briefing workflow is preserved. Phase 2 supports Cloudflare-hosted AI conversations, persistent cloud memory, Google Calendar commands, reminders, and an optional paid phone-call provider integration.
+A zero-cost-first Telegram assistant project. The existing Phase 1 morning briefing workflow is preserved. Phase 2 supports Cloudflare-hosted AI conversations, persistent cloud memory, natural-language Google Calendar actions with confirmation, cloud reminders, and an optional paid phone-call provider integration.
 
 ## Phase 1 — Morning briefing
 The GitHub Actions workflow .github/workflows/jarvis-morning.yml sends the daily weather/news briefing.
