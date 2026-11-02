@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "cloud-phase2/src/index.js"
+      - "cloud-phase2/src/agent-tools.mjs"
+      - "cloud-phase2/local_bridge.py"
       - "cloud-phase2/src/reminder-parser.mjs"
       - "cloud-phase2/src/calendar-intents.mjs"
       - "cloud-phase2/src/sales-documents.mjs"
@@ -58,12 +60,15 @@ jobs:
       - name: Check Worker JavaScript syntax
         run: |
           node --check cloud-phase2/src/index.js
+          node --check cloud-phase2/src/agent-tools.mjs
           node --check cloud-phase2/src/reminder-parser.mjs
           node --check cloud-phase2/src/calendar-intents.mjs
           node --check cloud-phase2/src/sales-documents.mjs
           node --check cloud-phase2/src/sales-analysis.mjs
           node --check cloud-phase2/src/sales-research.mjs
           node --check cloud-phase2/src/sales-scripts.mjs
+      - name: Check local Ollama bridge Python syntax
+        run: python -m py_compile cloud-phase2/local_bridge.py
       - name: Test reminder and Sales Intelligence helpers
         run: node --test cloud-phase2/tests/*.test.mjs
       - name: Validate Wrangler Worker bundle without deploying
