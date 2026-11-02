@@ -27,6 +27,8 @@ on:
       - main
     paths:
       - "cloud-phase2/src/index.js"
+      - "cloud-phase2/src/agent-tools.mjs"
+      - "cloud-phase2/local_bridge.py"
       - "cloud-phase2/src/reminder-parser.mjs"
       - "cloud-phase2/src/calendar-intents.mjs"
       - "cloud-phase2/src/sales-documents.mjs"
