@@ -8,7 +8,10 @@ CREATE TABLE IF NOT EXISTS reminders (
   due_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
   sent_at TEXT,
-  cancelled_at TEXT
+  cancelled_at TEXT,
+  recurrence TEXT NOT NULL DEFAULT 'none'
+    CHECK (recurrence IN ('none', 'daily', 'weekly')),
+  recurrence_end_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_reminders_due
@@ -16,6 +19,8 @@ CREATE INDEX IF NOT EXISTS idx_reminders_due
 
 CREATE INDEX IF NOT EXISTS idx_reminders_chat
   ON reminders (chat_id, due_at);
+CREATE INDEX IF NOT EXISTS idx_reminders_recurring_due
+  ON reminders (recurrence, due_at, sent_at, cancelled_at);
 
 CREATE TABLE IF NOT EXISTS processed_updates (
   update_id INTEGER PRIMARY KEY,
