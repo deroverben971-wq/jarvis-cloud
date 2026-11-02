@@ -37,9 +37,23 @@ function sendInitialEmail_(body) {
   const to = validateEmail_(body.to);
   const subject = safeText_(body.subject, 200);
   const messageBody = safeText_(body.body, 5000);
-  if (!to || !subject || !messageBody) return jsonOutput_({ ok: false, error: "Invalid recipient, subject, or message body" });
-  const sent = Gmail.Users.Messages.send({ raw: buildRawMessage_(to, subject, messageBody, null) }, "me");
-  return sentMetadata_(sent);
+  if (!to || !subject || !messageBody) {
+    return jsonOutput_({ ok: false, error: "Invalid recipient, subject, or message body" });
+  }
+
+  const fingerprint = sendFingerprint_({
+    action: "send_email",
+    to: to.toLowerCase(),
+    subject: subject,
+    body: messageBody
+  });
+
+  return sendIdempotently_(body.idempotencyKey, fingerprint, function () {
+    const sent = Gmail.Users.Messages.send({
+      raw: buildRawMessage_(to, subject, messageBody, null)
+    }, "me");
+    return sentMetadataResult_(sent);
+  });
 }
 
 function sendFollowup_(body) {
@@ -48,14 +62,203 @@ function sendFollowup_(body) {
   const messageBody = safeText_(body.body, 3000);
   const threadId = safeText_(body.threadId, 300);
   const inReplyTo = safeText_(body.inReplyToMessageId, 500);
-  if (!to || !subject || !messageBody || !threadId || !inReplyTo || /[\r\n]/.test(inReplyTo)) {
+  if (!to || !subject || !messageBody || !threadId || !inReplyTo || /[\\r\\n]/.test(inReplyTo)) {
     return jsonOutput_({ ok: false, error: "Invalid follow-up details" });
   }
-  const sent = Gmail.Users.Messages.send({
-    raw: buildRawMessage_(to, subject, messageBody, inReplyTo),
-    threadId: threadId
-  }, "me");
-  return sentMetadata_(sent);
+
+  const fingerprint = sendFingerprint_({
+    action: "send_followup",
+    to: to.toLowerCase(),
+    subject: subject,
+    body: messageBody,
+    threadId: threadId,
+    inReplyToMessageId: inReplyTo
+  });
+
+  return sendIdempotently_(body.idempotencyKey, fingerprint, function () {
+    const sent = Gmail.Users.Messages.send({
+      raw: buildRawMessage_(to, subject, messageBody, inReplyTo),
+      threadId: threadId
+    }, "me");
+    return sentMetadataResult_(sent);
+  });
+}
+
+/**
+ * Persist an operation key before calling Gmail. Replays of a confirmed send
+ * return the original receipt; replays of an uncertain attempt are blocked.
+ * This is deliberately fail-closed because Gmail may accept a message even
+ * when the network response is lost.
+ */
+function sendIdempotently_(keyValue, fingerprint, sendFunction) {
+  const idempotencyKey = safeText_(keyValue, 180);
+  if (!/^[A-Za-z0-9:_-]{12,180}$/.test(idempotencyKey)) {
+    return jsonOutput_({ ok: false, error: "A valid idempotency key is required. No email was sent." });
+  }
+
+  const propertyKey = "JARVIS_SEND_" + sha256Hex_(idempotencyKey);
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return jsonOutput_({ ok: false, error: "Gmail send lock is busy. No second send was attempted; check the send status." });
+  }
+
+  const properties = PropertiesService.getScriptProperties();
+  try {
+    const stored = properties.getProperty(propertyKey);
+    if (stored) {
+      let previous;
+      try {
+        previous = JSON.parse(stored);
+      } catch (error) {
+        return jsonOutput_({ ok: false, error: "A previous send record is unreadable. Check Gmail Sent; no second send was attempted." });
+      }
+      if (previous.fingerprint !== fingerprint) {
+        return jsonOutput_({ ok: false, error: "This idempotency key was already used for different message content. No email was sent." });
+      }
+      if (previous.status === "sent" && previous.response && previous.response.ok === true) {
+        return jsonOutput_({
+          ok: true,
+          messageId: previous.response.messageId,
+          threadId: previous.response.threadId,
+          rfc822MessageId: previous.response.rfc822MessageId,
+          subject: previous.response.subject,
+          replayed: true
+        });
+      }
+      return jsonOutput_({
+        ok: false,
+        error: "A previous attempt for this message is recorded as " +
+          String(previous.status || "unknown") +
+          ". Check Gmail Sent before any manual recovery; no second send was attempted."
+      });
+    }
+
+    properties.setProperty(propertyKey, JSON.stringify({
+      status: "sending",
+      fingerprint: fingerprint,
+      startedAt: new Date().toISOString()
+    }));
+  } finally {
+    lock.releaseLock();
+  }
+
+  let result;
+  try {
+    result = sendFunction();
+    if (!result || result.ok !== true) {
+      result = {
+        ok: false,
+        error: String(result && result.error
+          ? result.error
+          : "Gmail did not confirm the send. Check Gmail Sent before retrying.")
+      };
+    }
+  } catch (error) {
+    result = {
+      ok: false,
+      error: "Gmail send outcome is uncertain. Check Gmail Sent before retrying."
+    };
+  }
+
+  // If the final ledger write is interrupted, the earlier "sending" record
+  // remains and will still block a duplicate attempt.
+  const finishLock = LockService.getScriptLock();
+  if (finishLock.tryLock(5000)) {
+    try {
+      const latestRaw = properties.getProperty(propertyKey);
+      let latest = null;
+      try {
+        latest = latestRaw ? JSON.parse(latestRaw) : null;
+      } catch (error) {
+        latest = null;
+      }
+      if (latest && latest.fingerprint === fingerprint && latest.status === "sending") {
+        properties.setProperty(propertyKey, JSON.stringify({
+          status: result.ok ? "sent" : "uncertain",
+          fingerprint: fingerprint,
+          startedAt: latest.startedAt || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          response: result
+        }));
+        pruneSendLedger_(properties);
+      }
+    } finally {
+      finishLock.releaseLock();
+    }
+  }
+
+  return jsonOutput_(result);
+}
+
+function sendFingerprint_(request) {
+  return sha256Hex_(JSON.stringify(request));
+}
+
+function sha256Hex_(value) {
+  const bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(value),
+    Utilities.Charset.UTF_8
+  );
+  return bytes.map(function (byte) {
+    return ("0" + ((byte & 255).toString(16))).slice(-2);
+  }).join("");
+}
+
+function pruneSendLedger_(properties) {
+  const all = properties.getProperties();
+  const entries = [];
+  Object.keys(all).forEach(function (key) {
+    if (key.indexOf("JARVIS_SEND_") !== 0) return;
+    try {
+      const item = JSON.parse(all[key]);
+      if (item.status === "sent") {
+        entries.push({
+          key: key,
+          at: Date.parse(item.updatedAt || item.startedAt || "") || 0
+        });
+      }
+    } catch (error) {
+      // Preserve unreadable records; they must continue blocking re-sends.
+    }
+  });
+
+  // Keep a rolling ledger of up to 1,000 confirmed sends to stay within
+  // Apps Script property storage limits. Uncertain/sending records are never
+  // pruned automatically.
+  if (entries.length <= 1000) return;
+  entries.sort(function (a, b) { return a.at - b.at; });
+  const removeCount = entries.length - 900;
+  entries.slice(0, removeCount).forEach(function (item) {
+    properties.deleteProperty(item.key);
+  });
+}
+
+function sentMetadataResult_(sent) {
+  if (!sent || !sent.id || !sent.threadId) {
+    return { ok: false, error: "Gmail did not confirm a sent message. Check Gmail Sent before retrying." };
+  }
+
+  try {
+    const message = Gmail.Users.Messages.get("me", sent.id, {
+      format: "metadata",
+      metadataHeaders: ["Message-ID", "Subject", "To", "From", "Date"]
+    });
+    const headers = headersObject_(message.payload && message.payload.headers);
+    const rfc822MessageId = String(headers["message-id"] || "");
+    if (!rfc822MessageId) {
+      return { ok: false, error: "Message may have been sent, but Gmail headers were unavailable. Check Sent before retrying." };
+    }
+    return {
+      ok: true,
+      messageId: String(sent.id),
+      threadId: String(sent.threadId),
+      rfc822MessageId: rfc822MessageId,
+      subject: String(headers.subject || "")
+    };
+  } catch (error) {
+    return { ok: false, error: "Message may have been sent, but its receipt could not be read. Check Gmail Sent before retrying." };
+  }
 }
 
 function buildRawMessage_(to, subject, messageBody, inReplyTo) {
