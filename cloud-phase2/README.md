@@ -4,17 +4,19 @@ JARVIS receives Telegram messages through a Cloudflare Worker and uses Workers A
 
 ## Commands
 
-Reminder requests are parsed before normal AI chat so a scheduling request cannot be answered as though JARVIS has no reminder tool. The free Telegram reminder is distinct from a native Android Clock alarm; delivery depends on the production Worker Cron Trigger and Telegram being configured. `/status` runs read-only checks for D1, Calendar, Gmail profile, and configuration flags without sending email or changing events.
+Reminder and Calendar intents are parsed and routed before normal AI chat, so a scheduling request cannot be answered as though JARVIS has no reminder or Calendar integration. Normal chat remains available for everything else. The free Telegram reminder is distinct from a native Android Clock alarm; delivery depends on the production Worker Cron Trigger and Telegram being configured. `/status` runs read-only checks for D1, Calendar, Gmail profile, and configuration flags without sending email or changing events.
 
 - /help — show commands.
 - /calendar — list events for the next 7 days from your Google Calendar default calendar.
 - /event YYYY-MM-DD HH:MM duration title — create a Google Calendar event; duration 15–480 minutes. All times are Asia/Manila.
 - /alarm YYYY-MM-DD HH:MM title — create a Google Calendar event with a popup alert 5 minutes before it. This is not a native Android Clock alarm. Google Calendar must be signed in and synced on Android, with notifications allowed.
-- /deleteevent title — search matching calendar events from the past year through the next year; JARVIS displays each match and a short-lived confirmation code. No event is deleted by this command alone.
+- /deleteevent title — search matching calendar events and prepare a short-lived confirmation. Nothing is deleted by the search itself.
 - /confirmdelete CODE — delete only the exact event saved for that code after checking the title and start time again. Codes expire after 10 minutes.
-- /canceldelete CODE — cancel a pending confirmation without deleting the event.
+- /canceldelete CODE — cancel a pending deletion without deleting the event.
+- Natural language: “What’s on my calendar tomorrow?”, “Do I have any meetings this week?”, “Schedule a meeting with Alex tomorrow at 3 PM”, “Move my dentist appointment to Friday at 4 PM”, and “Cancel my dentist appointment”.
+- Natural create/move requests show an exact preview and require `confirm CODE` before writing to Google Calendar. Natural cancellation also requires `confirmdelete CODE`. If the date, time, or AM/PM is missing, JARVIS asks; your next message can supply just the missing detail. Clarification drafts expire after 10 minutes and can be cancelled by saying “cancel”.
 - Food-ordering commands are intentionally disabled in this deployment. `/food` returns a disabled notice and does not create or place an order.
-- /schedule — reminders due today.
+- /schedule — combined Google Calendar events and JARVIS reminders for today. “What’s my schedule tomorrow?” shows both for tomorrow.
 - /reminders — list upcoming JARVIS reminders.
 - /remind YYYY-MM-DD HH:MM task — free Telegram reminder (Manila time).
 - /reminder tomorrow 8:00 am task — natural-language reminder alias; also supports “remind me tomorrow at 8 AM to ...” and “remind me in 15 minutes to ...”. JARVIS confirms only after the D1 insert succeeds.
@@ -27,9 +29,9 @@ Reminder requests are parsed before normal AI chat so a scheduling request canno
 
 ## Before deploying this integration update
 
-Before deploying the daily schedule-summary change, run the SQL from `cloud-phase2/migrations/20261029_daily_schedule_briefings.sql` once in Cloudflare D1 Console against the existing `jarvis-reminders` database. The migration creates one idempotency/status table only; it does not delete or alter reminder rows. Do not deploy this code until the migration succeeds.
+Before deploying, ensure all earlier D1 migrations for this existing database have already been applied. This Calendar natural-language release adds `cloud-phase2/migrations/20261103_z_calendar_natural_language.sql` after the existing Sales Intelligence migration. Apply it once in Cloudflare D1 Console against the existing `jarvis-reminders` database. It creates only the short-lived pending-action and clarification tables; it does not alter or delete reminder rows, chat history, facts, Calendar events, or Gmail data. The guarded deployment workflow validates migrations locally but does not apply them remotely. Do not deploy the Worker before the new migration succeeds.
 
-The calendar-delete feature adds only the `pending_calendar_deletions` D1 table and its index. After merging, run the new `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` statements at the bottom of `cloud-phase2/schema.sql` in Cloudflare D1 Console before deploying the Worker source. This preserves all existing reminders, chat history, facts, and bridge data. Keep the existing Telegram webhook and all current secret values.
+Keep the existing Telegram webhook and all current secret values. The Calendar Apps Script bridge is updated separately; update its code from `google-calendar-apps-script.js` and deploy a new Web App version before deploying the Worker so exact date-range reads and verified event moves are supported.
 
 ## Manual Cloudflare deployment from GitHub Actions
 
@@ -75,7 +77,7 @@ https://developers.google.com/apps-script/guides/web
 12. Save/deploy the Worker. Keep existing DB, AI, and Telegram/bridge secrets unchanged. Update the Worker source with cloud-phase2/src/index.js after this feature branch is merged and reviewed.
 13. Test /calendar in Telegram, then create a low-stakes future event with /event YYYY-MM-DD HH:MM 30 JARVIS calendar test. Check it appears on your Android Google Calendar app; delete the test event if desired.
 
-The connector can list the next 7 days, create events, and search event titles across the past year and next year. Deletion is a two-step process: `/deleteevent title` finds matches and issues a 10-minute code; `/confirmdelete CODE` deletes only the matching event after the connector verifies its title and start time have not changed; `/canceldelete CODE` cancels it. Use explicit commands rather than natural-language deletion requests to avoid accidental calendar changes.
+The connector can list exact date ranges, create events, search event titles across the past year and next year, and move timed events. A move rechecks the original event title and start time before updating it. Deletion is a two-step process: `/deleteevent title` or a natural-language cancellation finds a single match and issues a 10-minute code; `confirmdelete CODE` deletes only that event after the connector verifies its title and start time have not changed; `canceldelete CODE` cancels it. Ambiguous searches do not modify anything.
 
 ## Sales Intelligence — Phase 1 document intake
 
