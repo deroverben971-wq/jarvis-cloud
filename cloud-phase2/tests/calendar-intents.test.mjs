@@ -67,6 +67,13 @@ test("does not classify reminder requests as calendar creates", () => {
   assert.equal(classifyCalendarRequest("Give me a meeting reminder at 6 PM"), null);
 });
 
+test("does not route ordinary cancellation or move requests to Calendar", () => {
+  assert.equal(classifyCalendarRequest("Cancel my subscription"), null);
+  assert.equal(classifyCalendarRequest("Cancel my meeting reminder"), null);
+  assert.equal(classifyCalendarRequest("Move my project files to the archive"), null);
+});
+
+
 
 test("understands polite calendar requests while keeping reminder cancellation separate", () => {
   assert.deepEqual(classifyCalendarRequest("Can you show my calendar tomorrow?"), {kind:"list",range:"tomorrow"});
