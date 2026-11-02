@@ -46,6 +46,7 @@ const HELP = [
   "",
   "EMAIL OUTREACH",
   "/outreach — show campaign status and commands",
+  "/outreach test — send one test email to the connected Gmail account",
   "/outreach start — let JARVIS ask what we are pitching",
   "/outreach add email | contact | company | why relevant — add one business prospect",
   "/outreach prospects — list prospects",
@@ -755,6 +756,7 @@ function outreachHelp(campaign) {
   const lines = [
     "📨 JARVIS EMAIL OUTREACH", "",
     "Permission-first outreach only. Publicly listed email addresses are not consent. Only documented opt-in contacts can be sent to; a parent/guardian must approve the campaign and review each exact draft. Automatic mode sends only individually reviewed, opted-in drafts. One follow-up may be sent after 4 days if no reply is detected.", "",
+    "/outreach test — send one test email to the connected Gmail account",
     "/outreach start — set up a campaign conversationally",
     "/outreach status — show campaign and counts",
     "/outreach add email | contact | company | why relevant",
@@ -791,6 +793,37 @@ async function handleOutreachCommand(env, chatId, raw) {
     await sendText(env, chatId, outreachHelp(campaign));
     return;
   }
+  if (lower === "test") {
+    const profile = await callGmailBridge(env, { action: "profile" });
+    if (!profile.ok || !validEmailAddress(profile.emailAddress)) {
+      await sendText(env, chatId, "Gmail self-test could not verify the connected account. No test email was sent.");
+      return;
+    }
+    if (profile.capabilities?.sendIdempotency !== true) {
+      await sendText(env, chatId, "Gmail duplicate-send protection is not available. No test email was sent.");
+      return;
+    }
+
+    const local = localDateParts();
+    const dayKey = String(local.year) + "-" + String(local.month).padStart(2, "0") + "-" + String(local.day).padStart(2, "0");
+    const account = String(profile.emailAddress).trim().toLowerCase();
+    const result = await callGmailBridge(env, {
+      action: "send_email",
+      idempotencyKey: "jarvis:" + chatId + ":gmail-self-test:" + dayKey,
+      to: account,
+      subject: "JARVIS Gmail self-test",
+      body: "This is a JARVIS Gmail connection test. It was sent to the same Gmail account that sent it. No prospect or other person was contacted.\n\nIf you can read this message, the Gmail send path is working."
+    });
+    if (!result.ok) {
+      await sendText(env, chatId, "⚠️ JARVIS could not confirm the Gmail self-test. No automatic retry will occur. Check the connected Gmail account's Sent folder before trying again. Details: " + String(result.error || "unknown error").slice(0, 180));
+      return;
+    }
+    await sendText(env, chatId, result.replayed
+      ? "✅ Today's Gmail self-test was already completed. The original receipt was reused; no second email was sent. Check the connected Gmail account's Inbox or Sent folder."
+      : "✅ JARVIS sent one Gmail self-test to its own connected account: " + account + "\nCheck that account's Inbox or Sent folder. No prospect or other person was contacted.");
+    return;
+  }
+
   if (lower === "start") {
     if (campaign) {
       await sendText(env, chatId, "You already have campaign #" + campaign.id + " (" + campaign.status + "). Use /outreach status, pause, or close before starting another.");
