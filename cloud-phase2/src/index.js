@@ -3728,9 +3728,23 @@ export default {
         "UPDATE bridge_queue SET status = 'processing', attempts = attempts + 1 WHERE id = ? AND status = 'pending'"
       ).bind(row.id).run();
       if (!claimed.meta?.changes) return json({ ok: true, job: null });
+      const [factRows, historyRows] = await Promise.all([
+        env.DB.prepare("SELECT fact FROM cloud_facts WHERE chat_id = ? ORDER BY id DESC LIMIT 40")
+          .bind(String(row.chat_id)).all(),
+        env.DB.prepare("SELECT role, content FROM cloud_messages WHERE chat_id = ? ORDER BY id DESC LIMIT 16")
+          .bind(String(row.chat_id)).all()
+      ]);
+      const recentHistory = (historyRows.results || []).reverse().map(item => ({
+        role: item.role, content: String(item.content || "").slice(-2400)
+      }));
+      const savedFacts = (factRows.results || []).map(item => String(item.fact || "").slice(0, 1000));
       return json({
         ok: true,
-        job: { id: row.id, chat_id: row.chat_id, text: row.message_text, model: "ollama", tools: JARVIS_OLLAMA_TOOLS }
+        job: {
+          id: row.id, chat_id: row.chat_id, text: row.message_text,
+          model: "ollama", tools: JARVIS_OLLAMA_TOOLS,
+          recent_history: recentHistory, saved_facts: savedFacts
+        }
       });
     }
     if (request.method === "POST" && url.pathname === "/bridge/tool") {
