@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   extractToolCalls,
+  JARVIS_AGENT_TOOLS,
   JARVIS_OLLAMA_TOOLS,
   nextRecurringDueAt,
   normalizeReminderIds,
@@ -80,4 +81,12 @@ test("extracts tool calls from Ollama message responses", () => {
     name: "list_reminders",
     arguments: { scope: "active", day: "any" }
   }]);
+});
+
+test("exports separate Workers AI and Ollama tool schema formats", () => {
+  assert.ok(JARVIS_AGENT_TOOLS.length >= 8);
+  assert.equal(typeof JARVIS_AGENT_TOOLS[0].name, "string");
+  assert.equal(JARVIS_AGENT_TOOLS[0].type, undefined);
+  assert.equal(JARVIS_OLLAMA_TOOLS[0].type, "function");
+  assert.equal(JARVIS_OLLAMA_TOOLS[0].function.name, JARVIS_AGENT_TOOLS[0].name);
 });
