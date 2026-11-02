@@ -253,8 +253,12 @@ def process(job):
         save_message(chat_id, "assistant", reply)
         return reply or "(Ollama returned an empty reply.)"
     except Exception as exc:
-        print(f"Ollama error: {type(exc).__name__}; message not sent to Telegram.")
-        return "I couldn't reach local Ollama. Check that Ollama is running, then send your message again."
+        print(f"Local agent error: {type(exc).__name__}; the final result could not be verified.")
+        return (
+            "I hit a local Ollama or tool-connection issue, so I couldn't verify the final result. "
+            "Please check your upcoming reminders or Calendar before retrying this request, "
+            "so we don't accidentally create a duplicate."
+        )
 
 def main():
     if not BASE_URL.startswith("https://") or not BRIDGE_SECRET:
