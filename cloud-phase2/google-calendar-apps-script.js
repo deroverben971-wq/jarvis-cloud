@@ -29,8 +29,16 @@ function doPost(e) {
 
     if (action === "list_events") {
       const days = Math.min(14, Math.max(1, Number(body.days) || 7));
-      const start = new Date();
-      const end = new Date(start.getTime() + days * 24 * 60 * 60 * 1000);
+      const requestedStart = body.timeMin ? new Date(String(body.timeMin)) : new Date();
+      const requestedEnd = body.timeMax
+        ? new Date(String(body.timeMax))
+        : new Date(requestedStart.getTime() + days * 24 * 60 * 60 * 1000);
+      if (isNaN(requestedStart.getTime()) || isNaN(requestedEnd.getTime()) ||
+          requestedEnd.getTime() <= requestedStart.getTime()) {
+        return jsonOutput({ ok: false, error: "Invalid calendar time range" });
+      }
+      const start = requestedStart;
+      const end = requestedEnd;
       const result = Calendar.Events.list(CALENDAR_ID, {
         timeMin: start.toISOString(),
         timeMax: end.toISOString(),
@@ -119,6 +127,43 @@ function doPost(e) {
           title: event.summary || title,
           start: event.start.dateTime || event.start.date,
           end: event.end.dateTime || event.end.date
+        }
+      });
+    }
+
+    if (action === "update_event") {
+      const eventId = String(body.eventId || "").trim().slice(0, 256);
+      const expectedTitle = String(body.expectedTitle || "").trim().slice(0, 160);
+      const expectedStart = String(body.expectedStart || "").trim();
+      const title = String(body.title || "").trim().slice(0, 160);
+      const start = new Date(String(body.start || ""));
+      const end = new Date(String(body.end || ""));
+      if (!eventId || !expectedTitle || !expectedStart ||
+          isNaN(start.getTime()) || isNaN(end.getTime()) || end.getTime() <= start.getTime()) {
+        return jsonOutput({ ok: false, error: "Invalid event update details" });
+      }
+      if (start.getTime() <= Date.now() || start.getTime() < Date.now() - 60 * 1000) {
+        return jsonOutput({ ok: false, error: "Updated event start must be in the future" });
+      }
+      const existing = Calendar.Events.get(CALENDAR_ID, eventId);
+      const actualTitle = existing.summary || "(Untitled event)";
+      const actualStart = existing.start.dateTime || existing.start.date;
+      if (actualTitle !== expectedTitle || actualStart !== expectedStart) {
+        return jsonOutput({ ok: false, error: "The event changed after the move was prepared. Search again before updating." });
+      }
+      const resource = {
+        start: { dateTime: start.toISOString(), timeZone: TIME_ZONE },
+        end: { dateTime: end.toISOString(), timeZone: TIME_ZONE }
+      };
+      if (title) resource.summary = title;
+      const updated = Calendar.Events.patch(resource, CALENDAR_ID, eventId);
+      return jsonOutput({
+        ok: true,
+        event: {
+          id: updated.id,
+          title: updated.summary || actualTitle,
+          start: updated.start.dateTime || updated.start.date,
+          end: updated.end.dateTime || updated.end.date
         }
       });
     }
