@@ -103,3 +103,29 @@ test("uses the meeting or appointment category as the task when no extra text is
   assert.equal(result.ok, true);
   assert.equal(result.task, "appointment");
 });
+
+
+test("routes greetings and polite lead-ins to the reminder handler", () => {
+  const request = "Hey Jarvis could you remind me today 3:30 to take a haircut?";
+  assert.equal(isReminderRequest(request), true);
+  const result = parseReminderRequest(request, new Date("2026-11-02T07:15:00.000Z"));
+  assert.equal(result.ok, false);
+  assert.equal(result.needsClarification, true);
+  assert.match(result.error, /3:30 AM or 3:30 PM/);
+});
+
+test("saves a greeted reminder after AM/PM is specified and trims punctuation", () => {
+  const request = "Hey Jarvis could you remind me today 3:30 PM to take a haircut?";
+  const result = parseReminderRequest(request, new Date("2026-11-02T07:15:00.000Z"));
+  assert.deepEqual(result, {
+    ok: true,
+    dueAt: "2026-11-02T07:30:00.000Z",
+    task: "take a haircut"
+  });
+});
+
+test("supports polite reminder setup wording after a Jarvis greeting", () => {
+  const result = parseReminderRequest("Hey Jarvis, could you set a reminder tomorrow at 8 AM to study?", now);
+  assert.equal(result.ok, true);
+  assert.equal(result.task, "study");
+});
