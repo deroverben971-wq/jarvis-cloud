@@ -664,22 +664,41 @@ async function callGmailBridge(env, payload) {
   const endpoint = String(env.GMAIL_WEBAPP_URL || "").trim();
   const secret = String(env.GMAIL_SHARED_SECRET || "");
   if (!endpoint || !secret) return { ok: false, setupMissing: true, error: "Gmail outreach connector is not configured." };
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST", redirect: "follow",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...payload, secret })
-    });
-    const data = await response.json().catch(() => null);
-    if (!response.ok || !data || data.ok !== true) {
-      console.error("Gmail connector returned an unsuccessful response:", response.status);
-      return { ok: false, error: data?.error ? String(data.error).slice(0, 180) : "Gmail connector rejected the request." };
+
+  const post = async requestPayload => {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        redirect: "follow",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...requestPayload, secret })
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data || data.ok !== true) {
+        console.error("Gmail connector returned an unsuccessful response:", response.status);
+        return {
+          ok: false,
+          error: data?.error ? String(data.error).slice(0, 180) : "Gmail connector rejected the request."
+        };
+      }
+      return data;
+    } catch (error) {
+      console.error("Gmail connector request failed:", error?.name || "unknown");
+      return { ok: false, error: "Could not reach the Gmail connector." };
     }
-    return data;
-  } catch (error) {
-    console.error("Gmail connector request failed:", error?.name || "unknown");
-    return { ok: false, error: "Could not reach the Gmail connector." };
+  };
+
+  if (payload.action === "send_email" || payload.action === "send_followup") {
+    const capabilities = await post({ action: "capabilities" });
+    if (!capabilities.ok || capabilities.capabilities?.sendIdempotency !== true) {
+      return {
+        ok: false,
+        error: "Gmail bridge update required: deploy the latest Apps Script before sending. No email was sent."
+      };
+    }
   }
+
+  return post(payload);
 }
 
 function validEmailAddress(value) {
