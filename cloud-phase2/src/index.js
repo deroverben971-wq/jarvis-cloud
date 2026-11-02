@@ -3254,7 +3254,10 @@ async function handleAIIntent(env, message, updateId) {
         break;
       }
 
-      messages.push({ role: "assistant", content: JSON.stringify(calls) });
+      messages.push({
+        role: "assistant",
+        content: JSON.stringify(calls.length === 1 ? calls[0] : calls)
+      });
       for (const call of calls.slice(0, 3)) {
         if (toolsExecuted >= 8) throw new Error("The assistant reached its safe tool-call limit for this message.");
         const args = parseToolArguments(call.arguments);
