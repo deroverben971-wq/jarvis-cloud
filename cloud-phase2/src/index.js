@@ -391,6 +391,7 @@ async function handlePendingCalendarClarification(env, chatId, replyText) {
   ).bind(String(chatId), now).first();
   if (!pending) return false;
   const reply = String(replyText || "").trim();
+  if (reply.startsWith("/") || /^(?:cancel|delete|remove)\\s+(?:my\\s+)?reminder\\b/i.test(reply)) return false;
   if (/^(?:cancel|never mind|nevermind|forget it)$/i.test(reply)) {
     await clearCalendarIntentDraft(env, chatId);
     await sendText(env, chatId, "✅ Okay. I cancelled that unfinished Calendar request. Nothing was changed.");
@@ -2902,11 +2903,13 @@ async function handleMessage(env, message) {
     return;
   }
   if (isReminderRequest(raw)) {
+    await clearCalendarIntentDraft(env, chatId);
     await handleReminderRequest(env, chatId, raw);
     return;
   }
   const calendarIntent = classifyCalendarRequest(raw);
   if (calendarIntent) {
+    await clearCalendarIntentDraft(env, chatId);
     await handleNaturalCalendarIntent(env, chatId, raw, calendarIntent);
     return;
   }
