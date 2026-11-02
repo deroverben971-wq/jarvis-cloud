@@ -106,6 +106,7 @@ function createBridge(options = {}) {
     calls: () => sendCalls,
     setOnSend(callback) { onSend = callback; },
     setThrowAfterSend(value) { throwAfterSend = value; },
+    setScriptProperty(key, value) { properties.set(key, String(value)); },
     parse(output) { return JSON.parse(output.getContent()); }
   };
 }
@@ -200,4 +201,22 @@ test("follow-up sends use the same idempotency protection", () => {
   assert.equal(second.ok, true);
   assert.equal(second.replayed, true);
   assert.equal(bridge.calls(), 1);
+});
+
+
+test("the authenticated bridge advertises duplicate-send protection to the Worker", () => {
+  const bridge = createBridge();
+  bridge.setScriptProperty("JARVIS_GMAIL_SHARED_SECRET", "test-shared-secret");
+
+  const result = bridge.parse(bridge.context.doPost({
+    postData: {
+      contents: JSON.stringify({
+        secret: "test-shared-secret",
+        action: "capabilities"
+      })
+    }
+  }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.capabilities.sendIdempotency, true);
 });
