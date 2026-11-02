@@ -108,6 +108,17 @@ export const JARVIS_AGENT_TOOLS = [
   }
 ];
 
+// Native Ollama / OpenAI-compatible function schema. Both the local Ollama brain
+// and the Cloudflare fallback use the same capabilities and argument contracts.
+export const JARVIS_OLLAMA_TOOLS = JARVIS_AGENT_TOOLS.map(tool => ({
+  type: "function",
+  function: {
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters
+  }
+}));
+
 export function parseToolArguments(value) {
   if (value && typeof value === "object" && !Array.isArray(value)) return value;
   if (typeof value !== "string") throw new Error("Tool arguments were not an object.");
@@ -157,7 +168,9 @@ export function nextRecurringDueAt(value, recurrence) {
 export function extractToolCalls(result) {
   const candidates = [
     result?.tool_calls,
+    result?.message?.tool_calls,
     result?.response?.tool_calls,
+    result?.response?.message?.tool_calls,
     result?.choices?.[0]?.message?.tool_calls
   ];
   for (const value of candidates) {
