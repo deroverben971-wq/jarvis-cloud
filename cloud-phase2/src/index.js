@@ -223,10 +223,20 @@ async function handlePendingReminderClarification(env, chatId, replyText) {
   const meridiem = /^(am|pm)$/i.exec(reply);
   if (!meridiem) return false;
   const original = String(pending.original_text);
-  const updated = original.replace(
-    /\b((?:[01]?\d|2[0-3]):[0-5]\d)\b(?!\s*(?:a\.?m\.?|p\.?m\.?))/i,
-    "$1 " + meridiem[1].toUpperCase()
-  );
+  const suffix = " " + meridiem[1].toUpperCase();
+
+  // Handle both explicit clock times ("8:00") and common bare-hour requests
+  // ("at 8"). Only match a bare hour after "at" so dates like 2026-11-02
+  // cannot accidentally have their month/day changed by the AM/PM reply.
+  const clockPattern = /\b((?:[01]?\d|2[0-3]):[0-5]\d)\b(?!\s*(?:a\.?m\.?|p\.?m\.?))/i;
+  const bareHourPattern = /\bat\s+(0?[1-9]|1[0-2])\b(?!\s*(?:a\.?m\.?|p\.?m\.?))/i;
+  let updated;
+  if (clockPattern.test(original)) {
+    updated = original.replace(clockPattern, "$1" + suffix);
+  } else {
+    updated = original.replace(bareHourPattern, "at $1:00" + suffix);
+  }
+
   if (updated === original) {
     await clearReminderIntentDraft(env, chatId);
     await sendText(env, chatId, "I couldn't match that AM/PM answer to the pending time. Please send the complete reminder again.");
