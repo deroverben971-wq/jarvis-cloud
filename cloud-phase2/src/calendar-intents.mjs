@@ -157,8 +157,16 @@ function parseDateTime(value, now) {
   };
 }
 
+function normalizeCalendarRequest(value) {
+  let text = String(value || "").trim();
+  text = text.replace(/^(?:hey|hi|hello)\\s+(?:there\\s+)?jarvis\\b[\\s,!:.-]*/i, "");
+  text = text.replace(/^jarvis\\b[\\s,!:.-]*/i, "");
+  text = text.replace(/^(?:please\\s+)?(?:can|could|would)\\s+you(?:\\s+please)?\\s+/i, "");
+  return text.trim();
+}
+
 export function classifyCalendarRequest(raw) {
-  const value = String(raw || "").trim();
+  const value = normalizeCalendarRequest(raw);
   const text = value.toLowerCase();
   if (!text || /^\/(?:calendar|event|alarm|deleteevent|confirmdelete|canceldelete)\b/i.test(text)) return null;
 
@@ -194,7 +202,7 @@ export function classifyCalendarRequest(raw) {
 }
 
 export function parseCalendarEventRequest(raw, now = new Date()) {
-  const original = String(raw || "").trim();
+  const original = normalizeCalendarRequest(raw);
   let body = original.replace(/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:i need to\s+|i want to\s+|i'd like to\s+)?(?:schedule|book|add|create|put|set up|arrange)\s+/i, "");
   body = body.replace(/^set\s+(?:me\s+)?(?:a|an)\s+/i, "");
   body = body.replace(/^(?:a|an|the)\s+/i, "");
