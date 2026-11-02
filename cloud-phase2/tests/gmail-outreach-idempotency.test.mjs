@@ -64,7 +64,7 @@ function createBridge(options = {}) {
       },
       base64EncodeWebSafe(value) {
         return Buffer.from(String(value), "utf8").toString("base64")
-          .replace(/\\+/g, "-").replace(/\\//g, "_");
+          .replace(/\+/g, "-").replace(/\//g, "_");
       }
     },
     ContentService: {
