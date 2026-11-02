@@ -220,7 +220,7 @@ test("follow-up validator rejects actual newline characters but accepts ordinary
   const rejected = bridge.parse(bridge.context.sendFollowup_({
     ...valid,
     idempotencyKey: "jarvis:chat-123:campaign-7:prospect-44:followup-1",
-    inReplyToMessageId: "<prior-message@mail.example>\\nInjected: value"
+    inReplyToMessageId: "<prior-message@mail.example>\nInjected: value"
   }));
 
   assert.equal(accepted.ok, true);
