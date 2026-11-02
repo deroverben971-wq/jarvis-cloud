@@ -9,9 +9,9 @@ function getReminderLead(value) {
   const leads = [
     /^\/(?:reminder|remind)(?:\s+me)?(?:\s+|$)/i,
     /^remind\s+me(?:\s+|$)/i,
-    /^(?:please\s+)?(?:set|create|make|add|schedule)\s+(?:me\s+)?(?:a\s+)?(?:(meeting|appointment|call)\s+)?reminder\b(?:\s+|$)/i,
-    /^(?:please\s+)?give\s+me\s+(?:a\s+)?(?:(meeting|appointment|call)\s+)?reminder\b(?:\s+|$)/i,
-    /^(?:please\s+)?(?:i need|i want)\s+(?:a\s+)?(?:(meeting|appointment|call)\s+)?reminder\b(?:\s+|$)/i,
+    /^(?:please\s+)?(?:set|create|make|add|schedule)\s+(?:me\s+)?(?:an?\s+)?(?:(meeting|appointment|call)\s+)?reminder\b(?:\s+|$)/i,
+    /^(?:please\s+)?give\s+me\s+(?:an?\s+)?(?:(meeting|appointment|call)\s+)?reminder\b(?:\s+|$)/i,
+    /^(?:please\s+)?(?:i need|i want)\s+(?:an?\s+)?(?:(meeting|appointment|call)\s+)?reminder\b(?:\s+|$)/i,
     /^reminder(?:\s+|$)/i
   ];
   for (const pattern of leads) {
@@ -75,6 +75,7 @@ function stripSpans(text, spans) {
   }
   return output
     .replace(/^\s*(?:(?:at|on|to|for|about|please)\b[\s,:;-]*)+/i, "")
+    .replace(/\s+(?:at|on|to|for|about|please)$/i, "")
     .replace(/^[\s,;:.-]+|[\s,;:.-]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
