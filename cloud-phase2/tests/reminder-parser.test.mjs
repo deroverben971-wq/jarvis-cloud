@@ -111,7 +111,7 @@ test("routes greetings and polite lead-ins to the reminder handler", () => {
   const result = parseReminderRequest(request, new Date("2026-11-02T07:15:00.000Z"));
   assert.equal(result.ok, false);
   assert.equal(result.needsClarification, true);
-  assert.match(result.error, /3:30 AM or 3:30 PM/);
+  assert.match(result.error, /3:30 AM or PM/);
 });
 
 test("saves a greeted reminder after AM/PM is specified and trims punctuation", () => {
