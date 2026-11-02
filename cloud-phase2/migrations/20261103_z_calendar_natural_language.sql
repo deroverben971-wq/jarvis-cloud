@@ -16,3 +16,18 @@ CREATE TABLE IF NOT EXISTS pending_calendar_actions (
 
 CREATE INDEX IF NOT EXISTS idx_pending_calendar_actions_chat_expiry
   ON pending_calendar_actions (chat_id, expires_at, consumed_at);
+
+-- One short-lived natural-language clarification draft per authorized Telegram chat.
+-- Users can answer missing date/time details in the next message or cancel the draft.
+
+CREATE TABLE IF NOT EXISTS calendar_intent_drafts (
+  chat_id TEXT PRIMARY KEY,
+  intent_kind TEXT NOT NULL CHECK (intent_kind IN ('create', 'move')),
+  original_text TEXT NOT NULL,
+  missing_detail TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_calendar_intent_drafts_expiry
+  ON calendar_intent_drafts (expires_at);
