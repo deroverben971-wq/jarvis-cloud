@@ -159,9 +159,9 @@ function parseDateTime(value, now) {
 
 function normalizeCalendarRequest(value) {
   let text = String(value || "").trim();
-  text = text.replace(/^(?:hey|hi|hello)\\s+(?:there\\s+)?jarvis\\b[\\s,!:.-]*/i, "");
-  text = text.replace(/^jarvis\\b[\\s,!:.-]*/i, "");
-  text = text.replace(/^(?:please\\s+)?(?:can|could|would)\\s+you(?:\\s+please)?\\s+/i, "");
+  text = text.replace(/^(?:hey|hi|hello)\s+(?:there\s+)?jarvis\b[\s,!:.-]*/i, "");
+  text = text.replace(/^jarvis\b[\s,!:.-]*/i, "");
+  text = text.replace(/^(?:please\s+)?(?:can|could|would)\s+you(?:\s+please)?\s+/i, "");
   return text.trim();
 }
 
