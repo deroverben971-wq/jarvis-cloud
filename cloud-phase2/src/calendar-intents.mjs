@@ -48,7 +48,7 @@ function removeSpans(value, spans) {
     .replace(/\s+(?:on|at|to|for|in)\s*$/i, "")
     .replace(/\b(?:in|on)\s+my\s+calendar\b/ig, "")
     .replace(/\bto\s+my\s+calendar\b/ig, "")
-    .replace(/^[\s,;:.-]+|[\s,;:.-]+$/g, "")
+    .replace(/^[\s,;:?.! -]+|[\s,;:?.! -]+$/g, "")
     .replace(/\s+/g, " ").trim();
 }
 
