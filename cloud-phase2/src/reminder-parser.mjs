@@ -4,8 +4,16 @@ const WEEKDAYS = {
   thursday: 4, friday: 5, saturday: 6
 };
 
+function normalizeReminderPrefix(value) {
+  let text = String(value || "").trim();
+  text = text.replace(/^(?:hey|hi|hello)\s+(?:there\s+)?jarvis\b[\s,!:.-]*/i, "");
+  text = text.replace(/^jarvis\b[\s,!:.-]*/i, "");
+  text = text.replace(/^(?:please\s+)?(?:can|could|would)\s+you(?:\s+please)?\s+/i, "");
+  return text.trim();
+}
+
 function getReminderLead(value) {
-  const text = String(value || "").trim();
+  const text = normalizeReminderPrefix(value);
   const leads = [
     /^\/(?:reminder|remind)(?:\s+me)?(?:\s+|$)/i,
     /^remind\s+me(?:\s+|$)/i,
@@ -76,7 +84,7 @@ function stripSpans(text, spans) {
   return output
     .replace(/^\s*(?:(?:at|on|to|for|about|please)\b[\s,:;-]*)+/i, "")
     .replace(/\s+(?:at|on|to|for|about|please)\s*$/i, "")
-    .replace(/^[\s,;:.-]+|[\s,;:.-]+$/g, "")
+    .replace(/^[\s,;:?.!-]+|[\s,;:?.!-]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
