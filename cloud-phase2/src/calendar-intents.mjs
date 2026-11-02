@@ -172,8 +172,7 @@ export function classifyCalendarRequest(raw) {
       /^(?:what'?s|what is|what are|do i have|show me)\b.*\b(?:calendar|calendar events|events|agenda)\b/i.test(value) ||
       /^(?:what'?s|what is)\s+(?:on\s+)?(?:my\s+)?schedule\s+(?:today|tomorrow|this week|next week)\??$/i.test(value) ||
       /^(?:list|show)\s+(?:my\s+)?(?:meetings|appointments)\s+(?:today|tomorrow|this week|next week)\??$/i.test(value) ||
-      /^(?:(?:what'?s|what is|what are|do i have|show me)\\s+)?(?:any\\s+)?(?:my\\s+)?(?:meetings|appointments)\\b.*\\b(?:today|tomorrow|this week|next week)\\??$/i.test(value) ||
-      /^(?:(?:what'?s|what is|what are|do i have|show me)\b.*\b)(?:meetings|appointments)\b.*\b(?:today|tomorrow|this week|next week)\??$/i.test(value)) {
+      /^(?:(?:what'?s|what is|what are|do i have|show me)\s+)?(?:any\s+)?(?:my\s+)?(?:meetings|appointments)\b.*\b(?:today|tomorrow|this week|next week)\??$/i.test(value)) {
     return { kind: "list", range: /\bnext week\b/i.test(text) ? "next_week"
       : /\bthis week\b/i.test(text) ? "week"
       : /\btomorrow\b/i.test(text) ? "tomorrow"
