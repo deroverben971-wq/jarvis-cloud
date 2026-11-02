@@ -3822,7 +3822,8 @@ export default {
           const messageChatId = String(message.chat?.id ?? "");
           const cleanText = String(message.text || "").trim();
           const explicitCloudControl = cleanText.startsWith("/") ||
-            /^(?:help|confirm|confirmdelete|canceldelete|cancel)\b/i.test(cleanText);
+            /^help$/i.test(cleanText) ||
+            /^(?:confirm|confirmdelete|canceldelete|cancel)\s+[A-F0-9]{8}$/i.test(cleanText);
           if (explicitCloudControl) {
             await handleMessage(env, message, update.update_id);
           } else {
