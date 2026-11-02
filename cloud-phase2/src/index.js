@@ -3380,7 +3380,13 @@ export default {
         } else if (message.document) {
           await handleSalesDocument(env, message);
         } else if (message.text) {
-          if (isCloudCommand(message)) {
+          const messageChatId = String(message.chat?.id ?? "");
+          const pendingReminder = await env.DB.prepare(
+            "SELECT chat_id FROM reminder_intent_drafts WHERE chat_id = ? AND expires_at > ?"
+          ).bind(messageChatId, new Date().toISOString()).first();
+          const reminderFollowup = !!pendingReminder &&
+            /^(?:am|pm|cancel|never mind|nevermind|forget it)$/i.test(String(message.text).trim());
+          if (isCloudCommand(message) || reminderFollowup) {
             await handleMessage(env, message);
           } else {
             const pendingOutreach = await env.DB.prepare("SELECT * FROM outreach_campaigns WHERE chat_id = ? AND status = 'setup' ORDER BY id DESC LIMIT 1")
