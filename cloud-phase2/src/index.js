@@ -165,6 +165,12 @@ async function handleSystemStatus(env, chatId) {
     lines.push(gmail.ok && validEmailAddress(gmail.emailAddress)
       ? "Gmail: ✅ Connected as " + String(gmail.emailAddress).slice(0, 254)
       : "Gmail: ❌ Profile/authorization check failed — " + String(gmail.error || "invalid Gmail profile").slice(0, 150));
+    if (gmail.ok) {
+      lines.push("Gmail duplicate-send protection: " +
+        (gmail.capabilities?.sendIdempotency === true
+          ? "✅ Enabled"
+          : "⚠️ Apps Script update required; sending is blocked until updated"));
+    }
   }
 
   lines.push("Local Ollama bridge: " + (env.JARVIS_BRIDGE_SECRET
