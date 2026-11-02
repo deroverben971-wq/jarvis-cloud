@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   extractToolCalls,
+  JARVIS_OLLAMA_TOOLS,
   nextRecurringDueAt,
   normalizeReminderIds,
   parseToolArguments,
@@ -57,4 +58,26 @@ test("advances recurring reminders without changing Manila wall-clock time", () 
     "2026-11-09T09:00:00.000Z"
   );
   assert.throws(() => nextRecurringDueAt("not a date", "daily"), /invalid/);
+});
+
+test("exports standard native function schemas for Ollama", () => {
+  assert.ok(JARVIS_OLLAMA_TOOLS.length >= 8);
+  const cancel = JARVIS_OLLAMA_TOOLS.find(tool => tool.function.name === "cancel_reminders");
+  assert.equal(cancel.type, "function");
+  assert.deepEqual(cancel.function.parameters.required, ["ids"]);
+});
+
+test("extracts tool calls from Ollama message responses", () => {
+  const calls = extractToolCalls({
+    message: {
+      role: "assistant",
+      tool_calls: [{
+        function: { name: "list_reminders", arguments: { scope: "active", day: "any" } }
+      }]
+    }
+  });
+  assert.deepEqual(calls, [{
+    name: "list_reminders",
+    arguments: { scope: "active", day: "any" }
+  }]);
 });
