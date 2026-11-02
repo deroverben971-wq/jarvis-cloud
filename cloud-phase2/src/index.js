@@ -3796,7 +3796,7 @@ export default {
     }
     const now = new Date().toISOString();
     const due = await env.DB.prepare(
-      "SELECT r.id, r.chat_id, r.task, r.due_at, p.status AS call_status FROM reminders r LEFT JOIN phone_call_reminders p ON p.reminder_id = r.id WHERE r.sent_at IS NULL AND r.cancelled_at IS NULL AND r.due_at <= ? ORDER BY r.due_at LIMIT 25"
+      "SELECT r.id, r.chat_id, r.task, r.due_at, r.recurrence, r.recurrence_end_at, p.status AS call_status FROM reminders r LEFT JOIN phone_call_reminders p ON p.reminder_id = r.id WHERE r.sent_at IS NULL AND r.cancelled_at IS NULL AND r.due_at <= ? ORDER BY r.due_at LIMIT 25"
     ).bind(now).all();
 
     for (const reminder of due.results || []) {
@@ -3819,8 +3819,22 @@ export default {
             await sendText(env, reminder.chat_id, "📞 Reminder phone call was not placed: " + call.error);
           }
         }
-        await env.DB.prepare("UPDATE reminders SET sent_at = ? WHERE id = ? AND sent_at IS NULL")
-          .bind(new Date().toISOString(), reminder.id).run();
+        const deliveredAt = new Date().toISOString();
+        const recurrence = String(reminder.recurrence || "none");
+        if (recurrence === "daily" || recurrence === "weekly") {
+          const nextDueAt = nextRecurringDueAt(reminder.due_at, recurrence);
+          const repeatEnd = reminder.recurrence_end_at ? new Date(reminder.recurrence_end_at).getTime() : null;
+          if (repeatEnd !== null && new Date(nextDueAt).getTime() > repeatEnd) {
+            await env.DB.prepare("UPDATE reminders SET sent_at = ? WHERE id = ? AND sent_at IS NULL")
+              .bind(deliveredAt, reminder.id).run();
+          } else {
+            await env.DB.prepare("UPDATE reminders SET due_at = ? WHERE id = ? AND sent_at IS NULL AND cancelled_at IS NULL")
+              .bind(nextDueAt, reminder.id).run();
+          }
+        } else {
+          await env.DB.prepare("UPDATE reminders SET sent_at = ? WHERE id = ? AND sent_at IS NULL")
+            .bind(deliveredAt, reminder.id).run();
+        }
       } catch (error) {
         console.error("Could not deliver reminder", reminder.id, error?.message || "unknown error");
       }
