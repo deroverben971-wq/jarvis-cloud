@@ -88,3 +88,23 @@ test("parses a polite meeting request and preserves the event title", () => {
   assert.equal(result.ok, true);
   assert.equal(result.title, "meeting with Alex");
 });
+
+
+test("routes greeted and polite Calendar requests through the Calendar intent layer", () => {
+  assert.deepEqual(classifyCalendarRequest("Hey Jarvis, could you show my calendar tomorrow?"), {kind:"list",range:"tomorrow"});
+  assert.equal(classifyCalendarRequest("Hey Jarvis, could you schedule a meeting with Alex tomorrow at 3 PM?").kind, "create");
+  assert.equal(classifyCalendarRequest("Hey Jarvis, can you move my dentist appointment to Friday at 4 PM?").kind, "move");
+  assert.equal(classifyCalendarRequest("Hey Jarvis, could you cancel my dentist appointment?").kind, "delete");
+});
+
+test("parses greeted Calendar event creation, move, and delete titles", () => {
+  const created = parseCalendarEventRequest("Hey Jarvis, could you schedule a meeting with Alex tomorrow at 3 PM?", now);
+  assert.equal(created.ok, true);
+  assert.equal(created.title, "meeting with Alex");
+
+  const moved = parseCalendarMoveRequest("Hey Jarvis, could you move my dentist appointment to tomorrow at 4 PM?", now);
+  assert.equal(moved.ok, true);
+  assert.equal(moved.query, "dentist appointment");
+
+  assert.equal(calendarDeleteQuery("Hey Jarvis, could you cancel my dentist appointment?"), "dentist appointment");
+});
