@@ -162,11 +162,14 @@ export function classifyCalendarRequest(raw) {
   const text = value.toLowerCase();
   if (!text || /^\/(?:calendar|event|alarm|deleteevent|confirmdelete|canceldelete)\b/i.test(text)) return null;
 
-  if (/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:move|reschedule|change)\s+(?:my\s+)?(.+?)\s+(?:to|for)\s+(.+)$/i.test(value)) {
+  if (/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:move|reschedule|change)\s+(?:my\s+)?(.+?)\s+(?:to|for)\s+(.+)$/i.test(value) &&
+      /\b(?:calendar|event|meeting|appointment|agenda|call)\b/i.test(value)) {
     return { kind: "move" };
   }
+  const deleteTarget = value.replace(/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:cancel|delete|remove)\s+(?:my\s+)?/i, "");
   if (/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:cancel|delete|remove)\s+(?:my\s+)?(?:calendar\s+)?(.+)$/i.test(value) &&
-      !/^(?:reminder|alarm)\b/i.test(value.replace(/^(?:(?:please)\s+|(?:(?:can|could|would)\s+you(?:\s+please)?\s+))?(?:cancel|delete|remove)\s+(?:my\s+)?/i, ""))) {
+      /\b(?:calendar|event|meeting|appointment|agenda|call)\b/i.test(deleteTarget) &&
+      !/\b(?:reminders?|alarms?)\b/i.test(deleteTarget)) {
     return { kind: "delete" };
   }
   if (/^(?:show|list|open|check)(?:\s+me)?\s+(?:my\s+)?(?:google\s+)?calendar(?:\s+events)?(?:\s+(?:today|tomorrow|this week|next week))?\??$/i.test(value) ||
