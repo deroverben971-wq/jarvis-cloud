@@ -367,6 +367,40 @@ async function cancelCalendarAction(env, chatId, raw) {
     : "That Calendar confirmation was not found or was already used. Nothing was changed.");
 }
 
+async function saveCalendarIntentDraft(env, chatId, kind, originalText, missingDetail) {
+  const now = new Date();
+  await env.DB.prepare(
+    "INSERT INTO calendar_intent_drafts (chat_id, intent_kind, original_text, missing_detail, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?) " +
+    "ON CONFLICT(chat_id) DO UPDATE SET intent_kind=excluded.intent_kind, original_text=excluded.original_text, " +
+    "missing_detail=excluded.missing_detail, updated_at=excluded.updated_at, expires_at=excluded.expires_at"
+  ).bind(String(chatId), kind, String(originalText).slice(0, 500), String(missingDetail || "details").slice(0, 30),
+    now.toISOString(), new Date(now.getTime() + 10 * 60 * 1000).toISOString()).run();
+}
+
+async function clearCalendarIntentDraft(env, chatId) {
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    "UPDATE calendar_intent_drafts SET original_text = '', expires_at = ? WHERE chat_id = ?"
+  ).bind(now, String(chatId)).run();
+}
+
+async function handlePendingCalendarClarification(env, chatId, replyText) {
+  const now = new Date().toISOString();
+  const pending = await env.DB.prepare(
+    "SELECT intent_kind, original_text FROM calendar_intent_drafts WHERE chat_id = ? AND expires_at > ?"
+  ).bind(String(chatId), now).first();
+  if (!pending) return false;
+  const reply = String(replyText || "").trim();
+  if (/^(?:cancel|never mind|nevermind|forget it)$/i.test(reply)) {
+    await clearCalendarIntentDraft(env, chatId);
+    await sendText(env, chatId, "✅ Okay. I cancelled that unfinished Calendar request. Nothing was changed.");
+    return true;
+  }
+  await clearCalendarIntentDraft(env, chatId);
+  await handleNaturalCalendarIntent(env, chatId, pending.original_text + " " + reply, { kind: pending.intent_kind });
+  return true;
+}
+
 async function prepareCalendarDeletion(env, chatId, query) {
   if (query.length < 2 || query.length > 100) {
     await sendText(env, chatId, "Tell me the event title to cancel, for example: cancel my dentist appointment.");
