@@ -17,7 +17,8 @@ const HELP = [
   "/reminders — list upcoming reminders",
   "/remind YYYY-MM-DD HH:MM task — add a reminder (Manila time)",
   "/reminder tomorrow 8:00 am task — natural-language reminder (Manila time)",
-  "You can also say: remind me tomorrow at 8 AM to do something.",
+  "You can simply say: Remind me tomorrow at 8 AM to do something.",
+  "Examples: Set a reminder to study at 7 PM; Give me a meeting reminder tomorrow at 9 AM.",
   "/cancel ID — cancel a reminder",
   "/remindcall YYYY-MM-DD HH:MM task — reminder plus a phone call (optional paid provider)",
   "",
@@ -187,8 +188,10 @@ async function handleReminderRequest(env, chatId, raw) {
   const parsed = parseReminderRequest(raw);
   if (!parsed.ok) {
     await sendText(env, chatId,
-      "⏰ I couldn't save that reminder, so nothing has been scheduled. " + parsed.error +
-      "\n\nExamples:\n/reminder tomorrow 8:00 am Continue building JARVIS\n/remind 2026-10-30 08:00 Continue building JARVIS\n\nTimes use Asia/Manila (Philippines time).");
+      (parsed.needsClarification
+        ? "⏰ Quick question — nothing has been scheduled yet. "
+        : "⏰ I couldn't save that reminder, so nothing has been scheduled. ") + parsed.error +
+      "\n\nExample: Remind me tomorrow at 8 AM to continue building JARVIS.\nTimes use Asia/Manila (Philippines time).");
     return;
   }
 
@@ -232,6 +235,23 @@ async function showReminders(env, chatId, todayOnly = false) {
   await sendText(env, chatId, heading + "\n\n" + lines.join("\n\n"));
 }
 
+
+async function showRemindersForDay(env, chatId, dayOffset) {
+  const today = localDateParts();
+  const start = new Date(Date.UTC(today.year, today.month - 1, today.day + dayOffset, -8, 0)).toISOString();
+  const end = new Date(Date.UTC(today.year, today.month - 1, today.day + dayOffset + 1, -8, 0)).toISOString();
+  const rows = await env.DB.prepare(
+    "SELECT id, task, due_at FROM reminders WHERE chat_id = ? AND sent_at IS NULL AND cancelled_at IS NULL AND due_at >= ? AND due_at < ? ORDER BY due_at LIMIT 30"
+  ).bind(String(chatId), start, end).all();
+  const items = rows.results || [];
+  const label = dayOffset === 1 ? "TOMORROW" : "TODAY";
+  if (!items.length) {
+    await sendText(env, chatId, "📅 You have no JARVIS reminders for " + label.toLowerCase() + ".");
+    return;
+  }
+  const lines = items.map(r => "#" + r.id + " · " + formatManila(r.due_at) + "\n   " + r.task);
+  await sendText(env, chatId, "📅 YOUR REMINDERS FOR " + label + "\n\n" + lines.join("\n\n"));
+}
 
 async function callGoogleCalendar(env, payload) {
   const endpoint = String(env.GOOGLE_CALENDAR_WEBAPP_URL || "").trim();
@@ -2589,9 +2609,17 @@ async function handleSalesCommand(env, chatId, raw) {
 
 function isCloudCommand(message) {
   const text = (message.text || "").trim().toLowerCase();
+  const naturalList = /^(?:show|list)(?: me)? (?:my )?(?:(?:upcoming|scheduled) )?reminders\??$/.test(text) ||
+    /^what reminders (?:do i have|are scheduled)(?: for (?:today|tomorrow))?\??$/.test(text);
+  const naturalCancel = /^(?:cancel|delete|remove)\s+(?:my\s+)?(?:reminder\s+)?#?\d+$/i.test(text);
+  const todaySchedule = /what('?s| is) my schedule (?:for )?today\??/.test(text) ||
+    /what do i have today\??/.test(text) ||
+    /^(?:what('?s| is) )?(?:on )?(?:my )?schedule today\??$/.test(text);
+  const tomorrowSchedule = /^(?:what('?s| is) )?(?:on )?(?:my )?schedule (?:for )?tomorrow\??$/.test(text);
   return isReminderRequest(text) || text === "/status" || text === "/start" || text === "/help" || text === "help" ||
     text === "/schedule" || text === "/reminders" ||
     text === "/remind" || text.startsWith("/remind ") || text === "/cancel" || text.startsWith("/cancel ") ||
+    naturalCancel || naturalList || todaySchedule || tomorrowSchedule ||
     text === "/remindcall" || text.startsWith("/remindcall ") ||
     text === "/calendar" || text === "/event" || text.startsWith("/event ") ||
     text === "/deleteevent" || text.startsWith("/deleteevent ") ||
@@ -2603,10 +2631,7 @@ function isCloudCommand(message) {
     text === "/alarm" || text.startsWith("/alarm ") ||
     text === "/callme" || text.startsWith("/callme ") ||
     text.startsWith("/remember ") || text === "/remember" || text === "/memories" ||
-    text === "/forget" || text.startsWith("/forget ") || text === "/history" || text === "/forgetme" ||
-    text === "show my reminders" || text === "list reminders" ||
-    /what('?s| is) my schedule (for )?today\??/.test(text) ||
-    /what do i have today\??/.test(text);
+    text === "/forget" || text.startsWith("/forget ") || text === "/history" || text === "/forgetme";
 }
 
 async function enqueueForLocalJarvis(env, message, updateId) {
@@ -2649,11 +2674,19 @@ async function handleMessage(env, message) {
     await handleOutreachCommand(env, chatId, raw);
     return;
   }
-  if (text === "/schedule" || /what('?s| is) my schedule (for )?today\??/.test(text) || /what do i have today\??/.test(text)) {
+  if (text === "/schedule" || /what('?s| is) my schedule (?:for )?today\??/.test(text) ||
+      /what do i have today\??/.test(text) || /^(?:what('?s| is) )?(?:on )?(?:my )?schedule today\??$/.test(text)) {
     await showReminders(env, chatId, true);
     return;
   }
-  if (text === "/reminders" || text === "show my reminders" || text === "list reminders") {
+  if (/^(?:what('?s| is) )?(?:on )?(?:my )?schedule (?:for )?tomorrow\??$/.test(text) ||
+      /^what reminders (?:do i have|are scheduled) for tomorrow\??$/.test(text)) {
+    await showRemindersForDay(env, chatId, 1);
+    return;
+  }
+  if (text === "/reminders" || text === "show my reminders" || text === "list reminders" ||
+      /^(?:show|list)(?: me)? (?:my )?(?:(?:upcoming|scheduled) )?reminders\??$/.test(text) ||
+      /^what reminders (?:do i have|are scheduled)\??$/.test(text)) {
     await showReminders(env, chatId, false);
     return;
   }
@@ -2861,10 +2894,13 @@ async function handleMessage(env, message) {
     return;
   }
 
-  if (text.startsWith("/cancel")) {
-    const id = Number(raw.split(/\s+/)[1]);
+  if (text === "/cancel" || text.startsWith("/cancel ") ||
+      /^(?:cancel|delete|remove)\s+(?:my\s+)?(?:reminder\s+)?#?\d+$/i.test(raw)) {
+    const naturalMatch = /^(?:cancel|delete|remove)\s+(?:my\s+)?(?:reminder\s+)?#?(\d+)$/i.exec(raw);
+    const commandMatch = /^\/cancel\s+#?(\d+)$/i.exec(raw);
+    const id = Number((commandMatch || naturalMatch || [])[1]);
     if (!Number.isSafeInteger(id) || id < 1) {
-      await sendText(env, chatId, "Use /cancel ID — for example, /cancel 3");
+      await sendText(env, chatId, "Tell me the reminder number, for example: cancel reminder 3.");
       return;
     }
     const result = await env.DB.prepare(
