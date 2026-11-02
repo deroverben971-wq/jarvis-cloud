@@ -63,7 +63,7 @@ function sendFollowup_(body) {
   const messageBody = safeText_(body.body, 3000);
   const threadId = safeText_(body.threadId, 300);
   const inReplyTo = safeText_(body.inReplyToMessageId, 500);
-  if (!to || !subject || !messageBody || !threadId || !inReplyTo || /[\\r\\n]/.test(inReplyTo)) {
+  if (!to || !subject || !messageBody || !threadId || !inReplyTo || /[\r\n]/.test(inReplyTo)) {
     return jsonOutput_({ ok: false, error: "Invalid follow-up details" });
   }
 
