@@ -36,6 +36,15 @@ CREATE TABLE IF NOT EXISTS bridge_queue (
 CREATE INDEX IF NOT EXISTS idx_bridge_queue_status_id
   ON bridge_queue (status, id);
 
+-- Local-first Ollama bridge health; Cloudflare falls back to Workers AI when stale/offline.
+CREATE TABLE IF NOT EXISTS local_bridge_presence (
+  chat_id TEXT PRIMARY KEY,
+  last_seen_at TEXT NOT NULL,
+  model TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_local_bridge_presence_seen
+  ON local_bridge_presence (last_seen_at);
+
 -- Cloud-hosted AI chat history and long-term facts.
 -- These are separate from the existing local SQLite database on Windows.
 CREATE TABLE IF NOT EXISTS cloud_messages (
