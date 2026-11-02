@@ -3711,15 +3711,26 @@ export default {
     if (request.method === "GET" && url.pathname === "/") {
       return new Response("JARVIS Cloud Phase 2 is online.", { status: 200 });
     }
+    if (request.method === "POST" && url.pathname === "/bridge/heartbeat") {
+      if (!env.JARVIS_BRIDGE_SECRET || request.headers.get("X-Jarvis-Bridge-Secret") !== env.JARVIS_BRIDGE_SECRET) {
+        return json({ ok: false, error: "Unauthorized" }, 401);
+      }
+      let body;
+      try { body = await request.json(); } catch { return json({ ok: false, error: "Invalid JSON" }, 400); }
+      if (typeof body.ready !== "boolean" || typeof body.model !== "string" || body.model.length > 80) {
+        return json({ ok: false, error: "Invalid heartbeat payload" }, 400);
+      }
+      const modelStatus = (body.ready ? "ready:" : "offline:") + body.model;
+      await env.DB.prepare(
+        "INSERT INTO local_bridge_presence (chat_id, last_seen_at, model) VALUES (?, ?, ?) " +
+        "ON CONFLICT(chat_id) DO UPDATE SET last_seen_at = excluded.last_seen_at, model = excluded.model"
+      ).bind(String(env.TELEGRAM_CHAT_ID), new Date().toISOString(), modelStatus).run();
+      return json({ ok: true, model_ready: body.ready });
+    }
     if (request.method === "GET" && url.pathname === "/bridge/next") {
       if (!env.JARVIS_BRIDGE_SECRET || request.headers.get("X-Jarvis-Bridge-Secret") !== env.JARVIS_BRIDGE_SECRET) {
         return json({ ok: false, error: "Unauthorized" }, 401);
       }
-      const seenAt = new Date().toISOString();
-      await env.DB.prepare(
-        "INSERT INTO local_bridge_presence (chat_id, last_seen_at, model) VALUES (?, ?, ?) " +
-        "ON CONFLICT(chat_id) DO UPDATE SET last_seen_at = excluded.last_seen_at, model = excluded.model"
-      ).bind(String(env.TELEGRAM_CHAT_ID), seenAt, "ollama").run();
       const row = await env.DB.prepare(
         "SELECT id, chat_id, message_text FROM bridge_queue WHERE status = 'pending' ORDER BY id LIMIT 1"
       ).first();
@@ -3837,7 +3848,8 @@ export default {
               const presence = await env.DB.prepare(
                 "SELECT last_seen_at FROM local_bridge_presence WHERE chat_id = ?"
               ).bind(messageChatId).first();
-              const bridgeFresh = presence && Date.now() - new Date(presence.last_seen_at).getTime() <= 15000;
+              const bridgeFresh = presence && String(presence.model || "").startsWith("ready:") &&
+                Date.now() - new Date(presence.last_seen_at).getTime() <= 15000;
               if (bridgeFresh) {
                 await enqueueForLocalJarvis(env, message, update.update_id);
               } else if (env.AI) {
