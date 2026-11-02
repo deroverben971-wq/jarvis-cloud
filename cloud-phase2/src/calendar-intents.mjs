@@ -177,8 +177,8 @@ export function classifyCalendarRequest(raw) {
       : /\btomorrow\b/i.test(text) ? "tomorrow"
       : /\btoday\b/i.test(text) ? "today" : "week" };
   }
-  if (/^(?:please\s+)?(?:i want to\s+|i'd like to\s+)?(?:schedule|book|add|create|put|set up|arrange)\b/i.test(value) &&
-      /\b(?:calendar|event|meeting|appointment)\b/i.test(value)) {
+  if (/^(?:please\s+)?(?:i need to\s+|i want to\s+|i'd like to\s+)?(?:schedule|book|add|create|put|set up|arrange)\b/i.test(value) &&
+      /\b(?:calendar|event|meeting|appointment)\b|\bto my calendar\b|\bon my calendar\b/i.test(value)) {
     return { kind: "create" };
   }
   if (/^(?:please\s+)?(?:set|make|create)\s+(?:me\s+)?(?:a|an)\s+(?:meeting|appointment|event)\b/i.test(value)) {
@@ -189,7 +189,8 @@ export function classifyCalendarRequest(raw) {
 
 export function parseCalendarEventRequest(raw, now = new Date()) {
   const original = String(raw || "").trim();
-  let body = original.replace(/^(?:please\s+)?(?:i want to\s+|i'd like to\s+)?(?:schedule|book|add|create|put|set up|arrange)\s+/i, "");
+  let body = original.replace(/^(?:please\s+)?(?:i need to\s+|i want to\s+|i'd like to\s+)?(?:schedule|book|add|create|put|set up|arrange)\s+/i, "");
+  body = body.replace(/^set\s+(?:me\s+)?(?:a|an)\s+/i, "");
   body = body.replace(/^(?:a|an|the)\s+/i, "");
   const parsed = parseDateTime(body, now);
   if (!parsed.ok) return parsed;
