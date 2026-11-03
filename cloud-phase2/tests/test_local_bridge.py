@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from local_bridge import manila_clock_context
 
 
+# Keep the Manila clock independent of Windows timezone database packages.
 class ManilaClockContextTests(unittest.TestCase):
     def test_converts_utc_instant_to_manila_time(self):
         instant = datetime(2026, 11, 3, 9, 15, tzinfo=timezone.utc)
