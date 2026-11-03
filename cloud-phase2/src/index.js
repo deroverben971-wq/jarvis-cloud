@@ -3742,13 +3742,40 @@ export default {
       if (!env.JARVIS_BRIDGE_SECRET || request.headers.get("X-Jarvis-Bridge-Secret") !== env.JARVIS_BRIDGE_SECRET) {
         return json({ ok: false, error: "Unauthorized" }, 401);
       }
+      // A bridge process can stop after claiming a job. Mark old claims as
+      // outcome-unknown rather than replaying them: a reminder or Calendar
+      // write may already have happened before the connection was lost.
+      const staleBefore = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+      const staleJobs = await env.DB.prepare(
+        "SELECT id, chat_id, message_text FROM bridge_queue " +
+        "WHERE status = 'processing' AND COALESCE(claimed_at, created_at) < ? ORDER BY id LIMIT 20"
+      ).bind(staleBefore).all();
+      if ((staleJobs.results || []).length) {
+        const completedAt = new Date().toISOString();
+        await env.DB.prepare(
+          "UPDATE bridge_queue SET status = 'failed', completed_at = ? " +
+          "WHERE status = 'processing' AND COALESCE(claimed_at, created_at) < ?"
+        ).bind(completedAt, staleBefore).run();
+        for (const stale of staleJobs.results) {
+          try {
+            await sendText(env, stale.chat_id,
+              "⚠️ JARVIS lost its local connection while processing this request: " +
+              String(stale.message_text || "").slice(0, 220) +
+              "\nThe final result is unverified. I did not automatically repeat it, to avoid duplicate reminders or Calendar changes. Check your reminders/Calendar before retrying.");
+          } catch (error) {
+            console.error("Could not notify about an interrupted bridge job:", error?.message || "unknown error");
+          }
+        }
+      }
+
       const row = await env.DB.prepare(
         "SELECT id, chat_id, message_text FROM bridge_queue WHERE status = 'pending' ORDER BY id LIMIT 1"
       ).first();
       if (!row) return json({ ok: true, job: null });
+      const claimTime = new Date().toISOString();
       const claimed = await env.DB.prepare(
-        "UPDATE bridge_queue SET status = 'processing', attempts = attempts + 1 WHERE id = ? AND status = 'pending'"
-      ).bind(row.id).run();
+        "UPDATE bridge_queue SET status = 'processing', attempts = attempts + 1, claimed_at = ? WHERE id = ? AND status = 'pending'"
+      ).bind(claimTime, row.id).run();
       if (!claimed.meta?.changes) return json({ ok: true, job: null });
       const [factRows, historyRows] = await Promise.all([
         env.DB.prepare("SELECT fact FROM cloud_facts WHERE chat_id = ? ORDER BY id DESC LIMIT 40")
