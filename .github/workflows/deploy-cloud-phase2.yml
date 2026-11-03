@@ -56,6 +56,7 @@ jobs:
           node --check cloud-phase2/src/index.js
           node --check cloud-phase2/src/agent-tools.mjs
           python -m py_compile cloud-phase2/local_bridge.py
+          python -m unittest discover -s cloud-phase2/tests -p "test_*.py"
           node --check cloud-phase2/src/reminder-parser.mjs
           node --check cloud-phase2/src/calendar-intents.mjs
           node --check cloud-phase2/src/sales-documents.mjs
