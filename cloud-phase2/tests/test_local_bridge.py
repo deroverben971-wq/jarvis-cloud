@@ -13,7 +13,7 @@ class ManilaClockContextTests(unittest.TestCase):
         instant = datetime(2026, 11, 3, 9, 15, tzinfo=timezone.utc)
         self.assertEqual(
             manila_clock_context(instant),
-            "Tuesday, November 03, 2026 at 05:15 PM PST"
+            "Tuesday, November 03, 2026 at 05:15 PM PHT"
         )
 
     def test_rejects_naive_datetime(self):
