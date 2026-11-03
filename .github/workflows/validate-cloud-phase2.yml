@@ -1,4 +1,5 @@
 name: Validate JARVIS Cloud Phase 2
+# Includes regression tests for the local bridge clock and D1 migration behavior.
 
 on:
   pull_request:
