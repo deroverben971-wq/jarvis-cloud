@@ -86,8 +86,9 @@ jobs:
       - name: Production database migration reminder
         run: |
           echo "D1 migrations are not automatically applied by this workflow; apply pending SQL in filename order before deployment."
-          echo "Confirm 20261103_z_calendar_natural_language.sql and 20261104_recurring_reminders.sql are already applied; apply 20261105_local_ollama_agent.sql exactly once to the existing jarvis-reminders database."
-          echo "This workflow validates SQL but does not run remote D1 migrations. The local Ollama migration adds the heartbeat table used for primary-brain routing."
+          echo "Confirm 20261103_z_calendar_natural_language.sql, 20261104_recurring_reminders.sql, and 20261105_local_ollama_agent.sql are applied."
+          echo "Apply 20261106_bridge_queue_recovery.sql exactly once to the existing jarvis-reminders database before deploying."
+          echo "This workflow validates SQL but does not run remote D1 migrations. The bridge recovery migration adds a claim timestamp so interrupted jobs can be flagged without unsafe automatic replay."
       - name: Check Cloudflare credentials are configured
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
