@@ -14,9 +14,8 @@ import time
 import threading
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 BASE_URL = os.getenv("JARVIS_CLOUD_URL", "").strip().rstrip("/")
 BRIDGE_SECRET = os.getenv("JARVIS_BRIDGE_SECRET", "").strip()
@@ -51,13 +50,15 @@ SYSTEM_PROMPT = (
 def now():
     return datetime.now(timezone.utc).isoformat()
 
+MANILA_TZ = timezone(timedelta(hours=8), name="PHT")
+
+
 def manila_clock_context(current=None):
-    """Return an unambiguous, testable Asia/Manila clock string for the AI prompt."""
-    local_zone = ZoneInfo("Asia/Manila")
-    value = current or datetime.now(local_zone)
+    """Return a testable Manila clock string without requiring a Windows tz database."""
+    value = current or datetime.now(MANILA_TZ)
     if value.tzinfo is None:
         raise ValueError("The Manila clock value must be timezone-aware.")
-    return value.astimezone(local_zone).strftime("%A, %B %d, %Y at %I:%M %p %Z")
+    return value.astimezone(MANILA_TZ).strftime("%A, %B %d, %Y at %I:%M %p %Z")
 
 
 def connect_db():
