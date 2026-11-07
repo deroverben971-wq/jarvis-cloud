@@ -379,7 +379,7 @@ if (Boolean(subdomainAfter?.enabled) !== Boolean(subdomainBefore?.enabled) ||
     Boolean(subdomainAfter?.previews_enabled) !== Boolean(subdomainBefore?.previews_enabled)) {
   throw new Error("The upload succeeded, but the workers.dev or preview setting changed unexpectedly.");
 }
-await verifyBindings(bindingsAfter, databases[0].database_id);
+await verifyBindings(bindingsAfter, databases[0].database_id, true);
 const retainedBindingsAfter = retainedBindingKeys(bindingsAfter);
 if (JSON.stringify(retainedBindingsAfter) !== JSON.stringify(retainedBindingsBefore)) {
   throw new Error("The Worker variable/secret binding names changed unexpectedly. Stop and inspect the Worker settings before another deployment.");
