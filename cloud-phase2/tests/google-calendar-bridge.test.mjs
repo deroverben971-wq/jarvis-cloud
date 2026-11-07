@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
 const source = await readFile(new URL("../google-calendar-apps-script.js", import.meta.url), "utf8");
+const futureStart = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+const futureEnd = new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString();
 
 function createBridge(options = {}) {
   const event = options.event || {
@@ -96,8 +98,8 @@ test("event move checks the original title and start before patching", () => {
     eventId: "event-1",
     expectedTitle: "Wrong title",
     expectedStart: "2026-11-04T02:00:00.000Z",
-    start: "2026-11-06T08:00:00.000Z",
-    end: "2026-11-06T09:00:00.000Z"
+    start: futureStart,
+    end: futureEnd
   });
   assert.equal(result.ok, false);
   assert.match(result.error, /changed/i);
@@ -111,11 +113,11 @@ test("event move updates only after exact original-event verification", () => {
     eventId: "event-1",
     expectedTitle: "Dentist appointment",
     expectedStart: "2026-11-04T02:00:00.000Z",
-    start: "2026-11-06T08:00:00.000Z",
-    end: "2026-11-06T09:00:00.000Z"
+    start: futureStart,
+    end: futureEnd
   });
   assert.equal(result.ok, true);
   assert.equal(result.event.title, "Dentist appointment");
   assert.equal(bridge.calls.patch.eventId, "event-1");
-  assert.equal(bridge.calls.patch.resource.start.dateTime, "2026-11-06T08:00:00.000Z");
+  assert.equal(bridge.calls.patch.resource.start.dateTime, futureStart);
 });
