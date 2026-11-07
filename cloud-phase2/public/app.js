@@ -212,6 +212,7 @@
     messages.innerHTML = "";
     addMessage("assistant", "Conversation display cleared. JARVIS's cloud history is unchanged.");
   });
-  if (savedKey) loadHistory();\n  if (!SpeechRecognition) micButton.title = "Speech recognition is not available in this browser.";
+  if (savedKey) loadHistory();
+  if (!SpeechRecognition) micButton.title = "Speech recognition is not available in this browser.";
   if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
 })();
