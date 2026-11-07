@@ -4,7 +4,8 @@ name: Validate JARVIS Cloud Phase 2
 on:
   pull_request:
     paths:
-      - "cloud-phase2/public/**"\n      - "cloud-phase2/src/index.js"
+      - "cloud-phase2/public/**"
+      - "cloud-phase2/src/index.js"
       - "cloud-phase2/src/agent-tools.mjs"
       - "cloud-phase2/local_bridge.py"
       - "cloud-phase2/src/reminder-parser.mjs"
@@ -28,7 +29,8 @@ on:
     branches:
       - main
     paths:
-      - "cloud-phase2/public/**"\n      - "cloud-phase2/src/index.js"
+      - "cloud-phase2/public/**"
+      - "cloud-phase2/src/index.js"
       - "cloud-phase2/src/agent-tools.mjs"
       - "cloud-phase2/local_bridge.py"
       - "cloud-phase2/src/reminder-parser.mjs"
