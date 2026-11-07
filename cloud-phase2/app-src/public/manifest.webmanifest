@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "JARVIS Personal Assistant",
+  "short_name": "JARVIS",
+  "description": "Your personal AI voice assistant.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#070b14",
+  "theme_color": "#070b14",
+  "icons": [
+    {
+      "src": "/jarvis-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
