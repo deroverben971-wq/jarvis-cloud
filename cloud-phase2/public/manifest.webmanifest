@@ -1,0 +1,14 @@
+{
+  "name": "JARVIS Voice Companion",
+  "short_name": "JARVIS",
+  "description": "Your personal JARVIS voice assistant.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#070b13",
+  "theme_color": "#080d18",
+  "icons": [
+    { "src": "/jarvis-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
