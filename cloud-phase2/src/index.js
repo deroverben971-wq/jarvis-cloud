@@ -3819,7 +3819,7 @@ export default {
       return handlePwaChat(request, env);
     }
     if (request.method === "GET" && url.pathname === "/") {
-      return new Response("JARVIS Cloud Phase 2 is online.", { status: 200 });
+      return env.ASSETS ? env.ASSETS.fetch(request) : new Response("JARVIS Cloud Phase 2 is online.", { status: 200 });
     }
     if (request.method === "POST" && url.pathname === "/bridge/heartbeat") {
       if (!env.JARVIS_BRIDGE_SECRET || request.headers.get("X-Jarvis-Bridge-Secret") !== env.JARVIS_BRIDGE_SECRET) {
@@ -3939,6 +3939,7 @@ export default {
       return json({ ok: true });
     }
     if (request.method !== "POST" || url.pathname !== "/telegram") {
+      if ((request.method === "GET" || request.method === "HEAD") && env.ASSETS) return env.ASSETS.fetch(request);
       return json({ ok: false, error: "Not found" }, 404);
     }
     const supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token") || "";
