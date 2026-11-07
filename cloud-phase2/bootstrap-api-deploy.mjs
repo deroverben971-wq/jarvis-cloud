@@ -1,5 +1,7 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const token = process.env.CLOUDFLARE_API_TOKEN;
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -59,29 +61,26 @@ function retainedBindingKeys(rows) {
     .sort();
 }
 
-async function verifyBindings(rows, databaseId) {
+async function verifyBindings(rows, databaseId, assetsBinding = null, requireAssets = false) {
   if (!Array.isArray(rows)) {
     throw new Error("Cloudflare returned an unexpected bindings format; deployment stopped safely.");
   }
 
   const retainedTypes = new Set(["plain_text", "json", "secret_text", "secret_key"]);
   const managedRows = rows.filter((item) => !retainedTypes.has(item.type));
-  const unexpected = managedRows.filter(
-    (item) => !((item.name === "DB" && item.type === "d1") || (item.name === "AI" && item.type === "ai"))
-  );
-
-  if (unexpected.length || managedRows.length !== 2) {
-    throw new Error(
-      "The live Worker has resource bindings beyond the configured DB and AI bindings. No deployment was made."
-    );
-  }
-
+  const allowed = (item) =>
+    (item.name === "DB" && item.type === "d1") ||
+    (item.name === "AI" && item.type === "ai") ||
+    (assetsBinding && item.name === assetsBinding && item.type === "assets");
+  const unexpected = managedRows.filter((item) => !allowed(item));
   const d1 = managedRows.find((item) => item.name === "DB" && item.type === "d1");
   const ai = managedRows.find((item) => item.name === "AI" && item.type === "ai");
+  const assets = assetsBinding ? managedRows.find((item) => item.name === assetsBinding && item.type === "assets") : null;
   const liveDatabaseId = d1?.id ?? d1?.database_id;
 
-  if (!d1 || liveDatabaseId !== databaseId || !ai) {
-    throw new Error("The live DB/AI bindings do not exactly match the checked-in deployment configuration. No deployment was made.");
+  if (unexpected.length || !d1 || liveDatabaseId !== databaseId || !ai ||
+      (requireAssets && assetsBinding && !assets)) {
+    throw new Error("The live DB/AI/assets bindings do not match the checked-in deployment configuration. No deployment was made.");
   }
 }
 
