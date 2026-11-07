@@ -186,7 +186,7 @@ const [environmentData, liveBindings, schedulesBefore, subdomainBefore, deployme
   api("/workers/scripts/" + workerName + "/versions")
 ]);
 
-await verifyBindings(liveBindings, databases[0].database_id);
+await verifyBindings(liveBindings, databases[0].database_id, config.assets?.binding || null, false);
 const retainedBindingsBefore = retainedBindingKeys(liveBindings);
 
 const activeDeployment = deploymentsBefore?.deployments?.[0];
@@ -252,7 +252,7 @@ if (latestUploadedVersion.id === activeVersionId) {
     );
   }
 
-  await verifyBindings(pendingBindings, databases[0].database_id);
+  await verifyBindings(pendingBindings, databases[0].database_id, config.assets?.binding || null, Boolean(config.assets?.binding));
   const pendingRetainedBindings = retainedBindingKeys(pendingBindings);
   if (JSON.stringify(pendingRetainedBindings) !== JSON.stringify(retainedBindingsBefore)) {
     throw new Error(
@@ -289,7 +289,8 @@ if (!bundle) {
 const liveScript = environmentData?.script || {};
 const configuredBindings = [
   { type: "d1", name: databases[0].binding, id: databases[0].database_id },
-  { type: "ai", name: config.ai.binding }
+  { type: "ai", name: config.ai.binding },
+  ...(config.assets?.binding ? [{ type: "assets", name: config.assets.binding }] : [])
 ];
 
 const metadata = {
@@ -308,12 +309,26 @@ if (Array.isArray(liveScript.compatibility_flags)) metadata.compatibility_flags 
 if (liveScript.limits) metadata.limits = liveScript.limits;
 if (liveScript.cache_options) metadata.cache_options = liveScript.cache_options;
 if (liveScript.placement_mode) metadata.placement = { mode: liveScript.placement_mode };
-if (liveScript.has_assets === true) metadata.keep_assets = true;
+if (liveScript.has_assets === true && !config.assets?.directory) metadata.keep_assets = true;
 if (liveScript.usage_model) metadata.usage_model = liveScript.usage_model;
 
 if (checkOnly) {
   console.log("READ-ONLY PREFLIGHT PASSED. No Worker upload or production change was made.");
   process.exit(0);
+}
+
+let assetsCompletionJwt = null;
+if (config.assets?.directory) {
+  console.log("Uploading or reusing the PWA static assets through Cloudflare asset upload.");
+  assetsCompletionJwt = await uploadConfiguredAssets();
+  metadata.assets = {
+    jwt: assetsCompletionJwt,
+    config: {
+      ...(config.assets.run_worker_first !== undefined ? { run_worker_first: config.assets.run_worker_first } : {}),
+      ...(config.assets.not_found_handling ? { not_found_handling: config.assets.not_found_handling } : {}),
+      ...(config.assets.html_handling ? { html_handling: config.assets.html_handling } : {})
+    }
+  };
 }
 
 let versionId = pendingVersionId;
@@ -411,7 +426,7 @@ if (Boolean(subdomainAfter?.enabled) !== Boolean(subdomainBefore?.enabled) ||
     Boolean(subdomainAfter?.previews_enabled) !== Boolean(subdomainBefore?.previews_enabled)) {
   throw new Error("The upload succeeded, but the workers.dev or preview setting changed unexpectedly.");
 }
-await verifyBindings(bindingsAfter, databases[0].database_id);
+await verifyBindings(bindingsAfter, databases[0].database_id, config.assets?.binding || null, Boolean(config.assets?.binding));
 const retainedBindingsAfter = retainedBindingKeys(bindingsAfter);
 if (JSON.stringify(retainedBindingsAfter) !== JSON.stringify(retainedBindingsBefore)) {
   throw new Error("The Worker variable/secret binding names changed unexpectedly. Stop and inspect the Worker settings before another deployment.");
