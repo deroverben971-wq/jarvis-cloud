@@ -59,29 +59,34 @@ function retainedBindingKeys(rows) {
     .sort();
 }
 
-async function verifyBindings(rows, databaseId) {
+async function verifyBindings(rows, databaseId, requireVoiceBinding = false) {
   if (!Array.isArray(rows)) {
     throw new Error("Cloudflare returned an unexpected bindings format; deployment stopped safely.");
   }
 
   const retainedTypes = new Set(["plain_text", "json", "secret_text", "secret_key"]);
   const managedRows = rows.filter((item) => !retainedTypes.has(item.type));
-  const unexpected = managedRows.filter(
-    (item) => !((item.name === "DB" && item.type === "d1") || (item.name === "AI" && item.type === "ai"))
-  );
-
-  if (unexpected.length || managedRows.length !== 2) {
-    throw new Error(
-      "The live Worker has resource bindings beyond the configured DB and AI bindings. No deployment was made."
-    );
-  }
-
   const d1 = managedRows.find((item) => item.name === "DB" && item.type === "d1");
   const ai = managedRows.find((item) => item.name === "AI" && item.type === "ai");
+  const voiceRows = managedRows.filter((item) =>
+    item.name === "JarvisVoiceAgent" && item.type === "durable_object_namespace"
+  );
+  const unexpected = managedRows.filter((item) => {
+    if (item.name === "DB" && item.type === "d1") return false;
+    if (item.name === "AI" && item.type === "ai") return false;
+    if (item.name === "JarvisVoiceAgent" && item.type === "durable_object_namespace") {
+      return item.class_name && item.class_name !== "JarvisVoiceAgent";
+    }
+    return true;
+  });
   const liveDatabaseId = d1?.id ?? d1?.database_id;
 
-  if (!d1 || liveDatabaseId !== databaseId || !ai) {
-    throw new Error("The live DB/AI bindings do not exactly match the checked-in deployment configuration. No deployment was made.");
+  if (unexpected.length || !d1 || !ai || voiceRows.length > 1 ||
+      managedRows.length !== 2 + voiceRows.length || liveDatabaseId !== databaseId ||
+      (requireVoiceBinding && voiceRows.length !== 1)) {
+    throw new Error(
+      "The live Worker resource bindings do not match the approved DB, AI, and optional JARVIS voice bindings. No deployment was made."
+    );
   }
 }
 
@@ -136,6 +141,7 @@ if (
 }
 
 const activeVersionId = activeVersions[0].version_id;
+const activeVersionDetails = await api("/workers/scripts/" + workerName + "/versions/" + activeVersionId);
 console.log("Current active deployment ID: " + (activeDeployment.id || "not reported") + ".");
 console.log("Current active production version: " + activeVersionId + " (100%).");
 console.log(
@@ -150,10 +156,7 @@ if (latestUploadedVersion.id === activeVersionId) {
 } else {
   // Recover only the single immediately-following API-uploaded version.
   // This handles a previous run where version upload succeeded but promotion failed.
-  const [activeVersionDetails, pendingVersionDetails] = await Promise.all([
-    api("/workers/scripts/" + workerName + "/versions/" + activeVersionId),
-    api("/workers/scripts/" + workerName + "/versions/" + latestUploadedVersion.id)
-  ]);
+  const pendingVersionDetails = await api("/workers/scripts/" + workerName + "/versions/" + latestUploadedVersion.id);
 
   const activeNumber = activeVersionDetails?.number;
   const pendingNumber = pendingVersionDetails?.number ?? latestUploadedVersion.number;
@@ -185,7 +188,7 @@ if (latestUploadedVersion.id === activeVersionId) {
     );
   }
 
-  await verifyBindings(pendingBindings, databases[0].database_id);
+  await verifyBindings(pendingBindings, databases[0].database_id, true);
   const pendingRetainedBindings = retainedBindingKeys(pendingBindings);
   if (JSON.stringify(pendingRetainedBindings) !== JSON.stringify(retainedBindingsBefore)) {
     throw new Error(
@@ -220,9 +223,16 @@ if (!bundle) {
 }
 
 const liveScript = environmentData?.script || {};
+const voiceBinding = config.durable_objects?.bindings?.find((item) =>
+  item.name === "JarvisVoiceAgent" && item.class_name === "JarvisVoiceAgent"
+);
+if (!voiceBinding) {
+  throw new Error("The JARVIS voice Durable Object binding is missing or unexpected.");
+}
 const configuredBindings = [
   { type: "d1", name: databases[0].binding, id: databases[0].database_id },
-  { type: "ai", name: config.ai.binding }
+  { type: "ai", name: config.ai.binding },
+  { type: "durable_object_namespace", name: voiceBinding.name, class_name: voiceBinding.class_name }
 ];
 
 const metadata = {
@@ -236,8 +246,33 @@ const metadata = {
   }
 };
 
-// Carry forward version-level settings that the version-upload API supports.
-if (Array.isArray(liveScript.compatibility_flags)) metadata.compatibility_flags = liveScript.compatibility_flags;
+// Preserve live runtime flags and add only the flags explicitly declared in Wrangler.
+const compatibilityFlags = [...new Set([
+  ...(Array.isArray(liveScript.compatibility_flags) ? liveScript.compatibility_flags : []),
+  ...(Array.isArray(config.compatibility_flags) ? config.compatibility_flags : [])
+])];
+if (compatibilityFlags.length) metadata.compatibility_flags = compatibilityFlags;
+
+// Apply only migration steps that are newer than the currently deployed DO migration tag.
+const configuredMigrations = Array.isArray(config.migrations) ? config.migrations : [];
+const activeMigrationTag = activeVersionDetails?.migration_tag || null;
+if (configuredMigrations.length) {
+  const activeMigrationIndex = activeMigrationTag
+    ? configuredMigrations.findIndex((item) => item.tag === activeMigrationTag)
+    : -1;
+  if (activeMigrationTag && activeMigrationIndex < 0) {
+    throw new Error("The active Durable Object migration tag is not present in source control. No deployment was made.");
+  }
+  const pendingMigrations = configuredMigrations.slice(activeMigrationIndex + 1);
+  if (pendingMigrations.length) {
+    const steps = pendingMigrations.map(({ tag, ...step }) => step);
+    metadata.migrations = pendingMigrations.length === 1
+      ? { ...steps[0], old_tag: activeMigrationTag || undefined, new_tag: pendingMigrations[0].tag }
+      : { old_tag: activeMigrationTag || undefined, new_tag: pendingMigrations[pendingMigrations.length - 1].tag, steps };
+  }
+} else if (activeMigrationTag) {
+  throw new Error("The active Worker uses Durable Objects but the checked-in config omits its migrations. No deployment was made.");
+}
 if (liveScript.limits) metadata.limits = liveScript.limits;
 if (liveScript.cache_options) metadata.cache_options = liveScript.cache_options;
 if (liveScript.placement_mode) metadata.placement = { mode: liveScript.placement_mode };
