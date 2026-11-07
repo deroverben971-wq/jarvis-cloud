@@ -86,7 +86,11 @@ async function route(request, env) {
 
   if (method === "POST" && path === "/v1/auth/login") {
     requireDatabase(env);
-    const result = await loginAccount(env.DB, await readJson(request));
+    const result = await loginAccount(
+      env.DB,
+      await readJson(request),
+      request.headers.get("CF-Connecting-IP") || "unknown"
+    );
     if (!result.ok) return json(request, env, { ok: false, error: result.code }, result.status);
     return json(request, env, { ok: true, ...result.session }, result.status);
   }
