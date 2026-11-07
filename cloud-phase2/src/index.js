@@ -3792,9 +3792,29 @@ async function handlePwaChat(request, env) {
   }
 }
 
+async function handlePwaHistory(request, env) {
+  if (!env.JARVIS_APP_ACCESS_KEY) return json({ ok: false, error: "The JARVIS app access key is not configured yet." }, 503);
+  const authorization = request.headers.get("Authorization") || "";
+  const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  if (!supplied || supplied !== env.JARVIS_APP_ACCESS_KEY) return json({ ok: false, error: "Unauthorized." }, 401);
+  if (!env.DB || !env.TELEGRAM_CHAT_ID) return json({ ok: false, error: "JARVIS cloud configuration is incomplete." }, 503);
+  const rows = await env.DB.prepare(
+    "SELECT role, content, created_at FROM cloud_messages WHERE chat_id = ? ORDER BY id DESC LIMIT 30"
+  ).bind(String(env.TELEGRAM_CHAT_ID)).all();
+  const history = (rows.results || []).reverse().map(row => ({
+    role: row.role === "assistant" ? "assistant" : "user",
+    content: String(row.content || "").replace(/^\[Voice App\] /, "").slice(0, 2000),
+    created_at: String(row.created_at || "")
+  }));
+  return json({ ok: true, messages: history });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/app/history") {
+      return handlePwaHistory(request, env);
+    }
     if (request.method === "POST" && url.pathname === "/app/chat") {
       return handlePwaChat(request, env);
     }
