@@ -200,7 +200,8 @@
     localStorage.setItem("jarvis_app_key", key);
     sessionStorage.removeItem("jarvis_app_key");
     connection.textContent = "Cloud · key saved";
-    setState("", "App key saved on this device");\n    loadHistory();
+    setState("", "App key saved on this device");
+    loadHistory();
   });
   $("forget-key").addEventListener("click", () => {
     localStorage.removeItem("jarvis_app_key"); sessionStorage.removeItem("jarvis_app_key");
