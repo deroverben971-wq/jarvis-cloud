@@ -21,5 +21,24 @@
   "keep_vars": true,
   "ai": {
     "binding": "AI"
-  }
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "JarvisVoiceAgent",
+        "class_name": "JarvisVoiceAgent"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "jarvis-voice-v1",
+      "new_sqlite_classes": [
+        "JarvisVoiceAgent"
+      ]
+    }
+  ]
 }
