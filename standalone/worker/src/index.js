@@ -18,7 +18,7 @@ function headersFor(request, env) {
     headers.set("access-control-allow-origin", origin);
     headers.set("vary", "Origin");
     headers.set("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
-    headers.set("access-control-allow-headers", "Authorization, Content-Type");
+    headers.set("access-control-allow-headers", "Authorization, Content-Type, X-Audio-Duration");
     headers.set("access-control-max-age", "600");
   }
   return headers;
@@ -47,6 +47,31 @@ async function readJson(request) {
   }
 }
 
+
+function audioBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+}
+
+async function reserveVoiceSeconds(db, seconds) {
+  const usageDay = new Date().toISOString().slice(0, 10);
+  const now = new Date().toISOString();
+  const dailyLimitSeconds = 180;
+  const row = await db.prepare(
+    "INSERT INTO usage_daily (usage_day, ai_calls, audio_seconds, updated_at) VALUES (?, 0, ?, ?) " +
+    "ON CONFLICT(usage_day) DO UPDATE SET audio_seconds = audio_seconds + excluded.audio_seconds, " +
+    "updated_at = excluded.updated_at " +
+    "WHERE usage_daily.audio_seconds + excluded.audio_seconds <= ? RETURNING audio_seconds"
+  ).bind(usageDay, seconds, now, dailyLimitSeconds).first();
+
+  if (!row) throw appError("VOICE_DAILY_LIMIT_REACHED", 429);
+  return row.audio_seconds;
+}
+
 function requireDatabase(env) {
   if (!env.DB) throw appError("DATABASE_UNAVAILABLE", 503);
 }
@@ -72,6 +97,7 @@ async function route(request, env) {
       version: "0.1.0",
       aiAvailable: Boolean(env.AI),
       databaseAvailable: Boolean(env.DB),
+      speechRecognitionAvailable: Boolean(env.AI),
       model: env.JARVIS_AI_MODEL || "@cf/zai-org/glm-4.7-flash",
       freeOnly: true
     });
@@ -105,6 +131,44 @@ async function route(request, env) {
     const user = await requireUser(request, env);
     const { tokenHash, ...profile } = user;
     return json(request, env, { ok: true, user: profile });
+  }
+
+
+  if (method === "POST" && path === "/v1/voice/transcribe") {
+    const user = await requireUser(request, env);
+    if (!env.AI) throw appError("AI_UNAVAILABLE", 503);
+
+    const contentLength = Number(request.headers.get("content-length") || 0);
+    if (contentLength > 5 * 1024 * 1024) throw appError("AUDIO_TOO_LARGE", 413);
+
+    const durationSeconds = Number(request.headers.get("X-Audio-Duration") || 0);
+    if (!Number.isInteger(durationSeconds) || durationSeconds < 1 || durationSeconds > 60) {
+      throw appError("AUDIO_DURATION_INVALID", 400);
+    }
+
+    const audio = await request.arrayBuffer();
+    if (!audio.byteLength || audio.byteLength > 5 * 1024 * 1024) {
+      throw appError("AUDIO_SIZE_INVALID", 400);
+    }
+
+    await reserveVoiceSeconds(env.DB, durationSeconds);
+    try {
+      const result = await env.AI.run("@cf/openai/whisper-large-v3-turbo", {
+        audio: audioBufferToBase64(audio),
+        task: "transcribe"
+      });
+      const transcript = String(result?.text || "").trim().slice(0, 8000);
+      if (!transcript) throw appError("VOICE_TRANSCRIPT_EMPTY", 422);
+      return json(request, env, {
+        ok: true,
+        transcript,
+        durationSeconds,
+        model: "@cf/openai/whisper-large-v3-turbo"
+      });
+    } catch (error) {
+      if (error?.code) throw error;
+      throw appError("VOICE_TRANSCRIPTION_FAILED", 502);
+    }
   }
 
   if (method === "POST" && path === "/v1/chat") {
