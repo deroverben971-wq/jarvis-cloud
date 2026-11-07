@@ -53,7 +53,12 @@ jobs:
           assert "* * * * *" in crons, "Minute Cron Trigger missing"
           print("Wrangler configuration checks passed.")
           PY
+          npm install --no-audit --no-fund --prefix cloud-phase2
+          npm run build --prefix cloud-phase2
           node --check cloud-phase2/src/index.js
+          node --check cloud-phase2/src/app-auth.mjs
+          node --check cloud-phase2/vite.config.js
+          node --check cloud-phase2/app-src/main.js
           node --check cloud-phase2/src/agent-tools.mjs
           python -m py_compile cloud-phase2/local_bridge.py
           python -m unittest discover -s cloud-phase2/tests -p "test_*.py"
@@ -89,6 +94,7 @@ jobs:
           echo "D1 migrations are not automatically applied by this workflow; apply pending SQL in filename order before deployment."
           echo "Confirm 20261103_z_calendar_natural_language.sql, 20261104_recurring_reminders.sql, and 20261105_local_ollama_agent.sql are applied."
           echo "Apply 20261106_bridge_queue_recovery.sql exactly once to the existing jarvis-reminders database before deploying."
+          echo "Apply 20261107_app_voice_sessions.sql exactly once to the existing jarvis-reminders database before deploying the PWA pairing API."
           echo "This workflow validates SQL but does not run remote D1 migrations. The bridge recovery migration adds a claim timestamp so interrupted jobs can be flagged without unsafe automatic replay."
       - name: Check Cloudflare credentials are configured
         env:

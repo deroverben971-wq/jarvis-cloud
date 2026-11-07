@@ -5,6 +5,11 @@ on:
   pull_request:
     paths:
       - "cloud-phase2/src/index.js"
+      - "cloud-phase2/src/app-auth.mjs"
+      - "cloud-phase2/package.json"
+      - "cloud-phase2/vite.config.js"
+      - "cloud-phase2/app-src/**"
+      - "cloud-phase2/APP-DEPLOYMENT.md"
       - "cloud-phase2/src/agent-tools.mjs"
       - "cloud-phase2/local_bridge.py"
       - "cloud-phase2/src/reminder-parser.mjs"
@@ -29,6 +34,11 @@ on:
       - main
     paths:
       - "cloud-phase2/src/index.js"
+      - "cloud-phase2/src/app-auth.mjs"
+      - "cloud-phase2/package.json"
+      - "cloud-phase2/vite.config.js"
+      - "cloud-phase2/app-src/**"
+      - "cloud-phase2/APP-DEPLOYMENT.md"
       - "cloud-phase2/src/agent-tools.mjs"
       - "cloud-phase2/local_bridge.py"
       - "cloud-phase2/src/reminder-parser.mjs"
@@ -59,11 +69,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Install app and Worker dependencies
+        run: npm install --no-audit --no-fund --prefix cloud-phase2
+      - name: Build installable JARVIS app
+        run: npm run build --prefix cloud-phase2
       - name: Validate Wrangler JSON configuration
         run: python -m json.tool cloud-phase2/wrangler.jsonc > /dev/null
       - name: Check Worker JavaScript syntax
         run: |
           node --check cloud-phase2/src/index.js
+          node --check cloud-phase2/src/app-auth.mjs
+          node --check cloud-phase2/vite.config.js
+          node --check cloud-phase2/app-src/main.js
           node --check cloud-phase2/src/agent-tools.mjs
           node --check cloud-phase2/src/reminder-parser.mjs
           node --check cloud-phase2/src/calendar-intents.mjs
