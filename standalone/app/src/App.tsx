@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
-  apiRequest, friendlyError, normalizeApiBase,
+  apiRequest, friendlyError, normalizeApiBase, transcribeAudio,
   type ApiEnvelope, type ApiMemory, type ApiSession, type ApiTask, type ApiUser,
   type AgentStatus, type ChatResponse
 } from "./api";
@@ -79,20 +79,118 @@ function AuthScreen({ apiBase, setApiBase, onAuth }: {
   </main>;
 }
 
-function ChatPage({ messages, busy, backendReady, onSend, onNew }: {
-  messages: ChatMessage[]; busy: boolean; backendReady: boolean;
-  onSend: (value: string) => Promise<void>; onNew: () => void;
+function ChatPage({ messages, busy, backendReady, onSend, onNew, onVoiceSend }: {
+  messages: ChatMessage[];
+  busy: boolean;
+  backendReady: boolean;
+  onSend: (value: string) => Promise<void>;
+  onNew: () => void;
+  onVoiceSend: (audio: Blob, durationSeconds: number) => Promise<void>;
 }) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
+  const [voiceError, setVoiceError] = useState("");
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const startedAtRef = useRef(0);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+      const recorder = recorderRef.current;
+      if (recorder && recorder.state !== "inactive") recorder.stop();
+      streamRef.current?.getTracks().forEach(track => track.stop());
+    };
+  }, []);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const value = draft.trim();
-    if (!value || busy) return;
+    if (!value || busy || transcribing) return;
     setError("");
     setDraft("");
-    try { await onSend(value); } catch (cause) { setDraft(value); setError(friendlyError(cause)); }
+    try { await onSend(value); }
+    catch (cause) { setDraft(value); setError(friendlyError(cause)); }
   }
+
+  async function startRecording() {
+    setVoiceError("");
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setVoiceError("This device does not expose microphone recording in its current app environment.");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      chunksRef.current = [];
+      startedAtRef.current = Date.now();
+
+      const mimeTypes = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+        "audio/ogg;codecs=opus"
+      ];
+      const supportedType = mimeTypes.find(type => MediaRecorder.isTypeSupported(type));
+      const recorder = supportedType
+        ? new MediaRecorder(stream, { mimeType: supportedType })
+        : new MediaRecorder(stream);
+
+      recorderRef.current = recorder;
+      recorder.ondataavailable = event => {
+        if (event.data && event.data.size > 0) chunksRef.current.push(event.data);
+      };
+      recorder.onerror = () => {
+        setRecording(false);
+        setVoiceError("Microphone recording failed. Check the app's microphone permission.");
+        stream.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      };
+      recorder.onstop = () => {
+        setRecording(false);
+        if (timerRef.current !== null) {
+          window.clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
+        stream.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+        recorderRef.current = null;
+
+        const duration = Math.max(1, Math.min(60, Math.ceil((Date.now() - startedAtRef.current) / 1000)));
+        const audio = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        chunksRef.current = [];
+        if (!audio.size) {
+          setVoiceError("No audio was captured. Try recording again.");
+          return;
+        }
+
+        setTranscribing(true);
+        void onVoiceSend(audio, duration)
+          .catch(cause => setVoiceError(friendlyError(cause)))
+          .finally(() => setTranscribing(false));
+      };
+
+      recorder.start(250);
+      setRecording(true);
+      timerRef.current = window.setTimeout(() => {
+        if (recorder.state === "recording") recorder.stop();
+      }, 60000);
+    } catch {
+      streamRef.current?.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+      setVoiceError("Microphone access was not granted or is unavailable. Check this app's microphone permission.");
+    }
+  }
+
+  function stopRecording() {
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state === "recording") recorder.stop();
+  }
+
   return <section className="chat-page">
     <div className="page-head"><div><div className="eyebrow">YOUR ASSISTANT</div><h1>Conversation</h1></div><button className="quiet-button" onClick={onNew} type="button">＋ New chat</button></div>
     <div className="chat-scroll">
@@ -111,12 +209,26 @@ function ChatPage({ messages, busy, backendReady, onSend, onNew }: {
           {message.role === "user" && <div className="avatar user-avatar">Y</div>}
         </article>)}
         {busy && <div className="working"><div className="avatar">J</div><div className="working-card"><span className="pulse" /> JARVIS is coordinating Planner, Researcher, Analyst, and Verifier…</div></div>}
+        {transcribing && <div className="working"><div className="avatar">J</div><div className="working-card"><span className="pulse" /> Transcribing your voice…</div></div>}
       </div>}
     </div>
     <div className="composer-zone">
       {error && <div className="error">{error}</div>}
-      <form className="composer" onSubmit={submit}><textarea rows={1} maxLength={8000} value={draft} onChange={e => setDraft(e.target.value)} placeholder="Tell JARVIS what you want to accomplish…" /><div className="composer-bottom"><span>Enter to send · Multi-agent reasoning</span><button disabled={busy || !draft.trim()} aria-label="Send message">↑</button></div></form>
-      <div className="composer-note">External actions remain approval-gated. JARVIS must verify results before claiming completion.</div>
+      {voiceError && <div className="error">{voiceError}</div>}
+      {recording && <div className="recording-note"><span className="recording-dot" /> Recording — tap Stop when you are finished (60-second maximum).</div>}
+      <form className="composer" onSubmit={submit}>
+        <textarea rows={1} maxLength={8000} value={draft} onChange={e => setDraft(e.target.value)} placeholder="Tell JARVIS what you want to accomplish…" />
+        <div className="composer-bottom">
+          <span>Enter to send · Voice recording is processed for transcription</span>
+          <div className="composer-actions">
+            <button type="button" className={recording ? "mic-button recording" : "mic-button"} disabled={busy || transcribing} onClick={() => recording ? stopRecording() : void startRecording()} aria-label={recording ? "Stop recording" : "Start voice conversation"}>
+              {recording ? "■ Stop" : transcribing ? "…" : "🎙"}
+            </button>
+            <button disabled={busy || transcribing || !draft.trim()} aria-label="Send message">↑</button>
+          </div>
+        </div>
+      </form>
+      <div className="composer-note">Voice is turn-based: speak, wait for transcription, then JARVIS replies aloud using a device voice. No paid voice service is used.</div>
     </div>
   </section>;
 }
@@ -166,8 +278,17 @@ function MemoryPage({ memories, onAdd, onDelete }: {
   </section>;
 }
 
-function SettingsPage({ apiBase, onSave, user, onLogout, health }: {
-  apiBase: string; onSave: (value: string) => void; user: ApiUser; onLogout: () => void; health: string;
+function SettingsPage({ apiBase, onSave, user, onLogout, health, autoSpeak, onAutoSpeak, voiceName, onVoiceName, voices }: {
+  apiBase: string;
+  onSave: (value: string) => void;
+  user: ApiUser;
+  onLogout: () => void;
+  health: string;
+  autoSpeak: boolean;
+  onAutoSpeak: (enabled: boolean) => void;
+  voiceName: string;
+  onVoiceName: (name: string) => void;
+  voices: SpeechSynthesisVoice[];
 }) {
   const [value, setValue] = useState(apiBase);
   const [saved, setSaved] = useState(false);
@@ -176,8 +297,9 @@ function SettingsPage({ apiBase, onSave, user, onLogout, health }: {
   }
   return <section className="content-page"><div className="page-head"><div><div className="eyebrow">CONFIGURATION</div><h1>Settings</h1></div><span className="count">Strictly free</span></div>
     <div className="data-card settings-card"><div className="data-top"><div><div className="eyebrow">CONNECTION</div><h3>JARVIS cloud backend</h3></div><span className={"connection " + health}>{health === "online" ? "● CONNECTED" : health === "offline" ? "● OFFLINE" : "● UNKNOWN"}</span></div><form onSubmit={submit} className="settings-form"><label>Worker API base URL<input value={value} onChange={e => setValue(e.target.value)} placeholder="https://your-standalone-worker.workers.dev" /></label><button className="primary-button">Save backend URL</button>{saved && <span className="verified">Saved on this device.</span>}</form></div>
+    <div className="data-card settings-card"><div className="eyebrow">VOICE</div><h3>Spoken responses</h3><label className="voice-toggle"><input type="checkbox" checked={autoSpeak} onChange={event => onAutoSpeak(event.target.checked)} /> Speak JARVIS replies aloud</label><label className="voice-select-label">Available device voice<select value={voiceName} onChange={event => onVoiceName(event.target.value)}><option value="">Best available male-sounding match</option>{voices.map(voice => <option key={voice.name + voice.lang} value={voice.name}>{voice.name} ({voice.lang})</option>)}</select></label><p className="muted">Voice choices come from your device. Choose a male-sounding option if one is available. Windows and Android may expose different voices.</p>{voices.length === 0 && <p className="muted">No selectable system voices were detected. The device default may still be available.</p>}</div>
     <div className="data-card settings-card"><div className="eyebrow">ACCOUNT</div><h3>{user.displayName || "JARVIS user"}</h3><p className="muted">{user.email}</p><button className="danger-button" onClick={onLogout}>Sign out</button></div>
-    <div className="data-card settings-card"><div className="eyebrow">BUDGET POLICY</div><h3>Free-only by design</h3><p className="muted">JARVIS stops when its free AI budget is exhausted. It will not silently switch to paid APIs or upgrade an account.</p></div>
+    <div className="data-card settings-card"><div className="eyebrow">BUDGET POLICY</div><h3>Free-only by design</h3><p className="muted">JARVIS stops when its free AI budget is exhausted. It will not silently switch to paid APIs or upgrade an account. Voice transcription has a separate shared daily cap.</p></div>
     <p className="app-version">JARVIS Standalone · App shell 0.1.0</p>
   </section>;
 }
@@ -194,6 +316,17 @@ export default function App() {
   const [memories, setMemories] = useState<ApiMemory[]>([]);
   const [busy, setBusy] = useState(false);
   const [globalError, setGlobalError] = useState("");
+  const [autoSpeak, setAutoSpeak] = useState(() => window.localStorage.getItem("jarvis.autoSpeak") !== "false");
+  const [voiceName, setVoiceName] = useState(() => window.localStorage.getItem("jarvis.voiceName") || "");
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+
+  useEffect(() => {
+    if (!("speechSynthesis" in window)) return;
+    const loadVoices = () => setVoices(window.speechSynthesis.getVoices());
+    loadVoices();
+    window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
+  }, []);
 
   useEffect(() => {
     const base = normalizeApiBase(apiBase);
@@ -244,6 +377,24 @@ export default function App() {
     setTasks(taskResult.tasks || []); setMemories(memoryResult.memories || []);
   }
 
+  function speakReply(text: string) {
+    if (!autoSpeak || !("speechSynthesis" in window)) return;
+    try {
+      const speech = window.speechSynthesis;
+      speech.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      const selected = voices.find(voice => voice.name === voiceName);
+      const preferred = voices.find(voice => /(male|david|daniel|james|mark|guy|alex|tom|orion|zeus)/i.test(voice.name));
+      const english = voices.find(voice => voice.lang.toLowerCase().startsWith("en"));
+      const chosen = selected || preferred || english || voices[0];
+      if (chosen) utterance.voice = chosen;
+      utterance.rate = 1;
+      speech.speak(utterance);
+    } catch {
+      // Text chat remains available if device speech output is unavailable.
+    }
+  }
+
   async function sendMessage(value: string) {
     if (!token) throw new Error("UNAUTHORIZED");
     setBusy(true);
@@ -255,11 +406,28 @@ export default function App() {
       }, token);
       setConversationId(response.conversationId);
       setMessages(current => [...current, { id: id(), role: "assistant", content: response.reply, agents: response.agents, time: new Date().toISOString() }]);
+      speakReply(response.reply);
       await refreshData();
     } catch (error) {
       setMessages(current => current.filter(item => item.id !== userMessage.id));
       throw error;
     } finally { setBusy(false); }
+  }
+
+  async function sendVoice(audio: Blob, durationSeconds: number) {
+    const transcript = await transcribeAudio(apiBase, audio, durationSeconds, token);
+    await sendMessage(transcript);
+  }
+
+  function updateAutoSpeak(enabled: boolean) {
+    setAutoSpeak(enabled);
+    window.localStorage.setItem("jarvis.autoSpeak", String(enabled));
+    if (!enabled && "speechSynthesis" in window) window.speechSynthesis.cancel();
+  }
+
+  function updateVoiceName(name: string) {
+    setVoiceName(name);
+    window.localStorage.setItem("jarvis.voiceName", name);
   }
 
   async function addMemory(kind: ApiMemory["kind"], content: string) {
@@ -295,12 +463,12 @@ export default function App() {
     </aside>
     <main className="main-area"><header className="topbar"><div className="breadcrumb"><b>JARVIS</b><span>/</span>{pageTitle[page]}</div><div className="top-status"><span className={"connection-dot " + health} />{health === "online" ? "Cloud connected" : health === "offline" ? "Backend unavailable" : "Cloud not checked"}<span className="free-badge">FREE CORE</span></div></header>
       {globalError && <div className="global-error">{globalError}<button onClick={() => setGlobalError("")}>Dismiss</button></div>}
-      {page === "chat" && <ChatPage messages={messages} busy={busy} backendReady={health === "online"} onSend={sendMessage} onNew={() => {setConversationId("");setMessages([]);}} />}
+      {page === "chat" && <ChatPage messages={messages} busy={busy} backendReady={health === "online"} onSend={sendMessage} onVoiceSend={sendVoice} onNew={() => {setConversationId("");setMessages([]);}} />}
       {page === "tasks" && <TasksPage tasks={tasks} />}
       {page === "agents" && <AgentsPage tasks={tasks} />}
       {page === "memory" && <MemoryPage memories={memories} onAdd={addMemory} onDelete={deleteMemory} />}
       {page === "approvals" && <section className="content-page"><div className="page-head"><div><div className="eyebrow">PERMISSION CENTER</div><h1>Approvals</h1></div><span className="count">Protected</span></div><div className="approval-banner"><div className="approval-symbol">◇</div><div><h2>Nothing acts without its permission layer.</h2><p>Calendar changes, messages, deployments, and file deletion will require explicit approval before their tools are enabled.</p></div></div><div className="empty"><h3>Approval workflow is not connected yet</h3><p>The database has approval records. The interactive approval API and tool execution layer are a later backend milestone.</p></div></section>}
-      {page === "settings" && <SettingsPage apiBase={apiBase} onSave={saveApiBase} user={user} onLogout={() => void logout()} health={health} />}
+      {page === "settings" && <SettingsPage apiBase={apiBase} onSave={saveApiBase} user={user} onLogout={() => void logout()} health={health} autoSpeak={autoSpeak} onAutoSpeak={updateAutoSpeak} voiceName={voiceName} onVoiceName={updateVoiceName} voices={voices} />}
     </main>
   </div>;
 }
