@@ -111,3 +111,41 @@ export function friendlyError(error: unknown): string {
   }
   return messages[code] || (error instanceof Error ? error.message : "Something went wrong.");
 }
+
+
+export async function transcribeAudio(
+  baseUrl: string,
+  audio: Blob,
+  durationSeconds: number,
+  token: string
+): Promise<string> {
+  const base = normalizeApiBase(baseUrl);
+  if (!base) throw new ApiError(0, "BACKEND_URL_NOT_SET");
+
+  let response: Response;
+  try {
+    response = await fetch(base + "/v1/voice/transcribe", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + token,
+        "Content-Type": audio.type || "application/octet-stream",
+        "X-Audio-Duration": String(durationSeconds)
+      },
+      body: audio
+    });
+  } catch {
+    throw new ApiError(0, "BACKEND_UNREACHABLE");
+  }
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new ApiError(
+      response.status,
+      typeof payload.error === "string" ? payload.error : "VOICE_TRANSCRIPTION_FAILED"
+    );
+  }
+
+  const transcript = typeof payload.transcript === "string" ? payload.transcript.trim() : "";
+  if (!transcript) throw new ApiError(422, "VOICE_TRANSCRIPT_EMPTY");
+  return transcript;
+}
