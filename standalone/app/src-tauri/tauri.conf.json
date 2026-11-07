@@ -28,7 +28,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],
-    "icon": ["icons/icon.png"],
+    "icon": ["icons/icon.png", "icons/icon.ico"],
     "category": "Productivity",
     "shortDescription": "Personal multi-agent AI assistant",
     "longDescription": "JARVIS is a standalone personal AI assistant powered by coordinated specialist agents."
