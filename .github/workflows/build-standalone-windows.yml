@@ -7,10 +7,6 @@ on:
     paths:
       - "standalone/app/**"
       - ".github/workflows/build-standalone-windows.yml"
-  pull_request:
-    paths:
-      - "standalone/app/**"
-      - ".github/workflows/build-standalone-windows.yml"
   workflow_dispatch:
 
 permissions:
@@ -19,6 +15,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: standalone/app
