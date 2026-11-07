@@ -194,6 +194,7 @@ pairForm.addEventListener("submit", async (event) => {
     await enterApp(result.token);
   } catch (error) {
     sessionToken = "";
+    localStorage.removeItem(SESSION_KEY);
     loginMessage.textContent = error?.message || "Pairing failed.";
   } finally {
     button.disabled = false;
