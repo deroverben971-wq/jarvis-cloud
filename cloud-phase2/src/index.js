@@ -3803,8 +3803,15 @@ async function runVoiceAssistantTurn(env, chatId, transcript, signal) {
       });
 
       for (const call of calls.slice(0, 3)) {
-        if (signal?.aborted && toolsExecuted === 0) {
-          finalAnswer = "I stopped before carrying out that action.";
+        if (signal?.aborted) {
+          if (executed.size) {
+            const completed = [...executed.entries()]
+              .map(([key, value]) => key.split(":")[0] + ": " + JSON.stringify(value))
+              .join("; ");
+            finalAnswer = "I was interrupted. These are the verified results from actions already started: " + completed.slice(0, 1500);
+          } else {
+            finalAnswer = "I stopped before carrying out that action.";
+          }
           break;
         }
         if (toolsExecuted >= 8) throw new Error("The voice assistant reached its safe tool-call limit.");
