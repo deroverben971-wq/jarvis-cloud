@@ -70,11 +70,11 @@ test("calendar list accepts an exact date range from the Worker", () => {
   const result = bridge.post({
     action: "list_events",
     timeMin: "2036-11-04T00:00:00.000Z",
-    timeMax: "2026-11-05T00:00:00.000Z"
+    timeMax: "2036-11-05T00:00:00.000Z"
   });
   assert.equal(result.ok, true);
   assert.equal(bridge.calls.list.args.timeMin, "2036-11-04T00:00:00.000Z");
-  assert.equal(bridge.calls.list.args.timeMax, "2026-11-05T00:00:00.000Z");
+  assert.equal(bridge.calls.list.args.timeMax, "2036-11-05T00:00:00.000Z");
 });
 
 test("calendar list rejects invalid or reversed date ranges", () => {
