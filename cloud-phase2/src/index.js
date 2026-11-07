@@ -8,6 +8,10 @@ import { buildSalesMarketMessages, parseSalesMarketResult, renderSalesMarketPlan
 import { searchFederalAwardRecipients, renderFederalAwardCandidates } from "./sales-discovery.mjs";
 import { searchUSConstructionCompanies } from "./sales-hunt.mjs";
 import { JARVIS_AGENT_TOOLS, JARVIS_OLLAMA_TOOLS, extractToolCalls, nextRecurringDueAt, normalizeReminderIds, parseToolArguments, validateIsoDateTime } from "./agent-tools.mjs";
+import { Agent } from "agents";
+import { routeAgentRequest } from "agents/routing";
+import { withVoice, WorkersAIFluxSTT, WorkersAITTS } from "agents/voice";
+import { authenticateAppRequest, createAppPairingCode, handleAppApiRequest, isAllowedAppOrigin } from "./app-auth.mjs";
 
 const HELP = [
   "🤖 JARVIS CLOUD — PHASE 2",
@@ -81,6 +85,7 @@ const HELP = [
   "/history — show recent cloud conversation history",
   "/forgetme — erase cloud conversation history and saved facts",
   "",
+  "/appcode — generate a one-time code to connect a phone or computer to the JARVIS app",
   "/status — check JARVIS cloud, reminders, Calendar, Gmail, and bridge configuration",
   "/help — show this message",
   "",
@@ -3336,6 +3341,18 @@ async function handleMessage(env, message, updateId) {
     await handleSystemStatus(env, chatId);
     return;
   }
+  if (text === "/appcode") {
+    try {
+      const pairing = await createAppPairingCode(env);
+      await sendText(env, chatId,
+        "🔐 JARVIS app pairing code: " + pairing.code +
+        "\n\nEnter this code only in your JARVIS app. It works once and expires in 10 minutes. Never share it with anyone.");
+    } catch (error) {
+      console.error("Could not create JARVIS app pairing code:", error?.message || "unknown error");
+      await sendText(env, chatId, "I could not create an app pairing code right now. Please try again shortly.");
+    }
+    return;
+  }
 
   // Exact confirmation tokens are intentionally deterministic and must not be
   // interpreted as ordinary chat by the AI planner.
@@ -3719,6 +3736,30 @@ async function handleCloudChat(env, message, updateId) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    if (url.pathname.startsWith("/app/api/")) {
+      return handleAppApiRequest(request, env);
+    }
+
+    if (url.pathname.startsWith("/agents/")) {
+      const check = async (req, route) => {
+        if (!isAllowedAppOrigin(req, env)) {
+          return new Response("Forbidden origin", { status: 403 });
+        }
+        if (route.className !== "JarvisVoiceAgent" || route.name !== "primary") {
+          return new Response("Forbidden agent route", { status: 403 });
+        }
+        const session = await authenticateAppRequest(req, env, true);
+        if (!session) return new Response("Unauthorized", { status: 401 });
+        const forwarded = new Request(req);
+        forwarded.headers.set("x-jarvis-session", session.tokenHash);
+        return forwarded;
+      };
+      return (await routeAgentRequest(request, env, {
+        onBeforeConnect: check,
+        onBeforeRequest: check
+      })) || new Response("Not found", { status: 404 });
+    }
     if (request.method === "GET" && url.pathname === "/") {
       return new Response("JARVIS Cloud Phase 2 is online.", { status: 200 });
     }
