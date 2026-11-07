@@ -3776,7 +3776,7 @@ async function handlePwaChat(request, env) {
       temperature: 0.55,
       chat_template_kwargs: { enable_thinking: false }
     });
-    const answer = String(result?.response || result?.result?.response || "").trim();
+    const answer = extractAIText(result);
     if (!answer) return json({ ok: false, error: "JARVIS returned an empty response. Try again." }, 502);
     const timestamp = new Date().toISOString();
     await env.DB.batch([
