@@ -31,6 +31,26 @@
     messages.scrollTop = messages.scrollHeight;
     return p;
   }
+  async function loadHistory() {
+    const key = getKey();
+    if (!key) return;
+    try {
+      const response = await fetch("/app/history", { headers: { "Authorization": "Bearer " + key } });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.ok) {
+        if (response.status === 401) connection.textContent = "Cloud · app key invalid";
+        return;
+      }
+      if (Array.isArray(data.messages) && data.messages.length) {
+        messages.innerHTML = "";
+        data.messages.forEach(item => addMessage(item.role === "assistant" ? "assistant" : "user", item.content));
+      }
+      connection.textContent = "Cloud · connected";
+    } catch {
+      connection.textContent = "Cloud · offline";
+    }
+  }
+
   function getKey() { return localStorage.getItem("jarvis_app_key") || sessionStorage.getItem("jarvis_app_key") || ""; }
 
   function loadVoices() {
@@ -180,7 +200,7 @@
     localStorage.setItem("jarvis_app_key", key);
     sessionStorage.removeItem("jarvis_app_key");
     connection.textContent = "Cloud · key saved";
-    setState("", "App key saved on this device");
+    setState("", "App key saved on this device");\n    loadHistory();
   });
   $("forget-key").addEventListener("click", () => {
     localStorage.removeItem("jarvis_app_key"); sessionStorage.removeItem("jarvis_app_key");
@@ -191,6 +211,6 @@
     messages.innerHTML = "";
     addMessage("assistant", "Conversation display cleared. JARVIS's cloud history is unchanged.");
   });
-  if (!SpeechRecognition) micButton.title = "Speech recognition is not available in this browser.";
+  if (savedKey) loadHistory();\n  if (!SpeechRecognition) micButton.title = "Speech recognition is not available in this browser.";
   if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
 })();
