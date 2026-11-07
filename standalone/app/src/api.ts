@@ -104,6 +104,12 @@ export function friendlyError(error: unknown): string {
     DAILY_AI_BUDGET_EXHAUSTED: "JARVIS reached its configured free AI-call limit. No paid fallback is enabled.",
     AI_UNAVAILABLE: "The free AI service is currently unavailable.",
     MESSAGE_LENGTH_INVALID: "Your message is empty or too long.",
+    AUDIO_TOO_LARGE: "That recording is too large. Record a shorter voice message.",
+    AUDIO_DURATION_INVALID: "Voice recordings must be 1 to 60 seconds long.",
+    AUDIO_SIZE_INVALID: "No usable audio was received. Try recording again.",
+    VOICE_DAILY_LIMIT_REACHED: "JARVIS reached its daily free transcription limit. Try again after the daily reset.",
+    VOICE_TRANSCRIPTION_FAILED: "JARVIS could not transcribe that recording. Try again or type your message.",
+    VOICE_TRANSCRIPT_EMPTY: "No speech was detected. Try again in a quieter place.",
     CONVERSATION_NOT_FOUND: "That conversation could not be found."
   };
   if (error instanceof ApiError && error.status >= 500 && !messages[code]) {
