@@ -1,4 +1,4 @@
-const CACHE_NAME = "jarvis-shell-v1";
+const CACHE_NAME = "jarvis-shell-v2";
 const SHELL = ["/", "/manifest.webmanifest", "/jarvis-icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -21,10 +21,23 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/agents/") || url.pathname.startsWith("/app/api/")) return;
   if (request.mode === "navigate") {
-    event.respondWith(fetch(request).catch(() => caches.match("/")));
+    event.respondWith(fetch(request).then((response) => {
+      const copy = response.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put("/", copy)).catch(() => {});
+      return response;
+    }).catch(() => caches.match("/")));
     return;
   }
-  event.respondWith(
-    caches.match(request).then((cached) => cached || fetch(request))
-  );
+  if (["script", "style", "image", "font"].includes(request.destination) ||
+      /\.(?:js|css|svg|webmanifest)$/.test(url.pathname)) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        const network = fetch(request).then((response) => {
+          if (response.ok) caches.open(CACHE_NAME).then((cache) => cache.put(request, response.clone())).catch(() => {});
+          return response;
+        });
+        return cached || network;
+      })
+    );
+  }
 });
