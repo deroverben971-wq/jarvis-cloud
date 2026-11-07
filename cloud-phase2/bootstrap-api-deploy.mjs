@@ -17,6 +17,74 @@ const config = JSON.parse(await fs.readFile(configPath, "utf8"));
 const workerName = config.name;
 const apiBase = "https://api.cloudflare.com/client/v4/accounts/" + accountId;
 
+function assetMime(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  return ({
+    ".html": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".webmanifest": "application/manifest+json",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml"
+  })[ext] || "application/octet-stream";
+}
+
+async function collectAssetManifest(directory) {
+  const manifest = {};
+  const filesByHash = new Map();
+  async function walk(current) {
+    for (const entry of await fs.readdir(current, { withFileTypes: true })) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const bytes = await fs.readFile(fullPath);
+      const relative = path.relative(directory, fullPath).split(path.sep).join("/");
+      const assetPath = "/" + relative;
+      const hash = crypto.createHash("sha256").update(bytes).digest("hex").slice(0, 32);
+      manifest[assetPath] = { hash, size: bytes.length };
+      filesByHash.set(hash, { bytes, mime: assetMime(fullPath), filename: entry.name });
+    }
+  }
+  await walk(directory);
+  if (!Object.keys(manifest).length) throw new Error("The configured Worker assets directory is empty.");
+  return { manifest, filesByHash };
+}
+
+async function uploadConfiguredAssets() {
+  if (!config.assets?.directory) return null;
+  const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
+  const assetsDirectory = path.resolve(scriptDirectory, config.assets.directory);
+  const { manifest, filesByHash } = await collectAssetManifest(assetsDirectory);
+  const session = await api("/workers/scripts/" + workerName + "/assets-upload-session", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ manifest })
+  });
+  if (typeof session?.jwt !== "string" || !session.jwt) {
+    throw new Error("Cloudflare did not return a static asset upload token.");
+  }
+
+  let completionJwt = session.jwt;
+  for (const bucket of session.buckets || []) {
+    const form = new FormData();
+    for (const hash of bucket) {
+      const asset = filesByHash.get(hash);
+      if (!asset) throw new Error("Cloudflare requested an unknown asset hash.");
+      form.set(hash, new Blob([asset.bytes.toString("base64")], { type: asset.mime }), asset.filename);
+    }
+    const uploaded = await api("/workers/assets/upload?base64=true", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + session.jwt },
+      body: form
+    });
+    if (typeof uploaded?.jwt === "string" && uploaded.jwt) completionJwt = uploaded.jwt;
+  }
+  return completionJwt;
+}
+
 async function api(pathname, options = {}) {
   let response;
   try {
