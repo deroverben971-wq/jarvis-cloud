@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#070b14" />
+    <meta name="description" content="JARVIS — your personal voice assistant." />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/jarvis-icon.svg" type="image/svg+xml" />
+    <title>JARVIS</title>
+  </head>
+  <body>
+    <main id="root">
+      <section id="loginPanel" class="login-panel">
+        <div class="brand-lockup">
+          <div class="brand-mark small"><span></span></div>
+          <div>
+            <p class="eyebrow">PERSONAL AI</p>
+            <h1>JARVIS</h1>
+          </div>
+        </div>
+        <p class="login-copy">Connect your personal assistant.</p>
+        <form id="pairForm">
+          <label for="pairCode">One-time pairing code</label>
+          <input id="pairCode" name="code" inputmode="text" autocomplete="one-time-code" maxlength="12" placeholder="Enter your 12-character code" required />
+          <button class="primary-button" type="submit">Connect JARVIS</button>
+        </form>
+        <p class="hint">In your private JARVIS Telegram chat, send <code>/appcode</code>. Enter the code JARVIS sends you here. Keep it private.</p>
+        <p id="loginMessage" class="message" role="status"></p>
+      </section>
+
+      <section id="assistantPanel" class="assistant-panel" hidden>
+        <header class="topbar">
+          <div class="brand-lockup compact">
+            <div class="brand-mark"><span></span></div>
+            <div>
+              <p class="eyebrow">PERSONAL AI</p>
+              <h1>JARVIS</h1>
+            </div>
+          </div>
+          <div class="topbar-actions">
+            <span id="connectionPill" class="connection-pill">OFFLINE</span>
+            <button id="installButton" class="quiet-button" type="button" hidden>Install</button>
+            <button id="logoutButton" class="quiet-button" type="button">Sign out</button>
+          </div>
+        </header>
+
+        <section class="voice-stage" aria-label="Voice assistant">
+          <div id="orb" class="orb-wrap">
+            <div class="orb-ring ring-one"></div>
+            <div class="orb-ring ring-two"></div>
+            <div class="orb">
+              <div class="orb-core"></div>
+              <div class="orb-glow"></div>
+            </div>
+          </div>
+          <p id="statusText" class="status-text">JARVIS is ready</p>
+          <p id="interimText" class="interim-text" aria-live="polite">Start a conversation when you're ready.</p>
+          <div class="voice-controls">
+            <button id="callButton" class="call-button" type="button">
+              <span class="mic-icon" aria-hidden="true">●</span>
+              <span id="callButtonText">Start conversation</span>
+            </button>
+            <button id="muteButton" class="circle-button" type="button" aria-label="Mute microphone" disabled>Ⅱ</button>
+          </div>
+          <p class="privacy-note">Your microphone is used only while a voice session is active.</p>
+        </section>
+
+        <section class="conversation-panel">
+          <div class="conversation-heading">
+            <h2>Conversation</h2>
+            <span id="messageCount">0 messages</span>
+          </div>
+          <div id="transcriptList" class="transcript-list" aria-live="polite">
+            <div class="empty-state">Your conversation will appear here.</div>
+          </div>
+          <form id="textForm" class="text-form">
+            <input id="textInput" name="message" maxlength="2000" placeholder="Or type a message..." autocomplete="off" />
+            <button id="sendButton" type="submit" aria-label="Send message" disabled>Send</button>
+          </form>
+        </section>
+        <footer class="app-footer">JARVIS • Connected to your private assistant</footer>
+      </section>
+    </main>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
