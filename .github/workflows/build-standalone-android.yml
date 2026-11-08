@@ -56,6 +56,9 @@ jobs:
       - name: Initialize Tauri Android project
         run: npm run android:init -- --ci --skip-targets-install
 
+      - name: Add Android microphone permissions
+        run: npm run android:prepare
+
       - name: Build debug APK for device testing
         run: npm run android:build -- --debug --target aarch64 --apk --ci
 

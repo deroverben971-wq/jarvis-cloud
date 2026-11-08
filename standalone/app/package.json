@@ -11,6 +11,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "android:init": "tauri android init",
+    "android:prepare": "node scripts/prepare-android-manifest.mjs",
     "android:build": "tauri android build"
   },
   "dependencies": {

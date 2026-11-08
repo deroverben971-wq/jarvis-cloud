@@ -9,6 +9,7 @@ Shared React + TypeScript interface wrapped by Tauri 2 for Windows and Android a
 - Task history and agent activity overview.
 - Explicit memory add/list/delete.
 - Approval-center placeholder that clearly reports that the workflow is not connected yet.
+- Push-to-talk transcription and device-native spoken replies.
 
 The API URL can be configured in Settings or through VITE_JARVIS_API_URL. Session tokens are held in sessionStorage in this prototype. Before public release, replace this with a native secure-storage integration and complete a security review.
 
@@ -43,10 +44,13 @@ Install Android Studio, Android SDK, NDK, Java, and the Rust Android targets req
 ~~~bash
 npm install
 npm run android:init
+npm run android:prepare
 npm run android:build
 ~~~
 
-Tauri Android project initialization is a local platform step and has not been run by this repository commit.
+The android:prepare step adds microphone permissions required for voice capture. The Rust WebView permission handler grants microphone capture requests only; all other WebView permission requests retain Tauri's default behavior. Android must still show its operating-system permission prompt to the user.
+
+The Android project is generated locally by Tauri. The CI workflow runs these steps before compiling a debug APK.
 
 Official documentation:
 - https://v2.tauri.app/start/create-project/
