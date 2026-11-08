@@ -49,6 +49,16 @@ export function extractJsonObject(text) {
   }
 }
 
+export function buildRunInputMetadata({ systemPrompt, userPrompt, maxTokens, temperature }) {
+  return {
+    promptSchema: "jarvis-agent-v1",
+    systemPromptChars: String(systemPrompt || "").length,
+    userPromptChars: String(userPrompt || "").length,
+    maxTokens,
+    temperature
+  };
+}
+
 function dailyCallCap(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 24;
@@ -90,7 +100,7 @@ export async function runAgent({
   const reservation = await reserveDailyAiCall(db, dailyCallCap(env.JARVIS_DAILY_AI_CALL_CAP));
   const runId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
-  const inputJson = JSON.stringify({ systemPrompt, userPrompt, maxTokens, temperature });
+  const inputJson = JSON.stringify(buildRunInputMetadata({ systemPrompt, userPrompt, maxTokens, temperature }));
 
   await db.prepare(
     "INSERT INTO agent_runs (id, task_id, user_id, agent_name, status, model, input_json, started_at) " +

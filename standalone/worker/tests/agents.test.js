@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AGENTS, getAgentDefinition, getEnabledAgents, isRunnableLlmAgent } from "../src/agents/registry.js";
-import { extractJsonObject, extractText, selectFreeModel } from "../src/agents/engine.js";
+import { buildRunInputMetadata, extractJsonObject, extractText, selectFreeModel } from "../src/agents/engine.js";
 
 test("agent registry exposes the planned core roles", () => {
   for (const role of ["core", "coordinator", "planner", "researcher", "analyst", "memory", "verifier", "safety_gate"]) {
@@ -38,4 +38,22 @@ test("JSON extraction accepts plain and surrounded JSON", () => {
 test("tool agents stay disabled until approval-gated tools are built", () => {
   assert.equal(AGENTS.developer.enabled, false);
   assert.equal(AGENTS.personal_assistant.enabled, false);
+});
+
+
+test("agent run metadata records prompt sizes without duplicating private prompt text", () => {
+  const secretText = "private user conversation content";
+  const metadata = buildRunInputMetadata({
+    systemPrompt: "system instruction",
+    userPrompt: secretText,
+    maxTokens: 620,
+    temperature: 0.2
+  });
+
+  assert.equal(metadata.promptSchema, "jarvis-agent-v1");
+  assert.equal(metadata.systemPromptChars, "system instruction".length);
+  assert.equal(metadata.userPromptChars, secretText.length);
+  assert.equal(metadata.maxTokens, 620);
+  assert.equal(metadata.temperature, 0.2);
+  assert.equal(JSON.stringify(metadata).includes(secretText), false);
 });
