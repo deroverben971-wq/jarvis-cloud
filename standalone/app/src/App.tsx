@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   apiRequest, friendlyError, normalizeApiBase, transcribeAudio,
-  type ApiEnvelope, type ApiMemory, type ApiSession, type ApiTask, type ApiUser,
+  type ApiEnvelope, type ApiConversation, type ApiConversationMessage, type ApiMemory, type ApiSession, type ApiTask, type ApiUser,
   type AgentStatus, type ChatResponse
 } from "./api";
 
@@ -79,9 +79,10 @@ function AuthScreen({ apiBase, setApiBase, onAuth }: {
   </main>;
 }
 
-function ChatPage({ messages, busy, backendReady, onSend, onNew, onVoiceSend }: {
+function ChatPage({ messages, busy, loadingConversation, backendReady, onSend, onNew, onVoiceSend }: {
   messages: ChatMessage[];
   busy: boolean;
+  loadingConversation: boolean;
   backendReady: boolean;
   onSend: (value: string) => Promise<void>;
   onNew: () => void;
@@ -110,7 +111,7 @@ function ChatPage({ messages, busy, backendReady, onSend, onNew, onVoiceSend }: 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const value = draft.trim();
-    if (!value || busy || transcribing) return;
+    if (!value || busy || transcribing || loadingConversation) return;
     setError("");
     setDraft("");
     try { await onSend(value); }
@@ -208,6 +209,7 @@ function ChatPage({ messages, busy, backendReady, onSend, onNew, onVoiceSend }: 
           </div>
           {message.role === "user" && <div className="avatar user-avatar">Y</div>}
         </article>)}
+        {loadingConversation && <div className="working"><div className="avatar">J</div><div className="working-card"><span className="pulse" /> Loading saved conversation…</div></div>}
         {busy && <div className="working"><div className="avatar">J</div><div className="working-card"><span className="pulse" /> JARVIS is coordinating Planner, Researcher, Analyst, and Verifier…</div></div>}
         {transcribing && <div className="working"><div className="avatar">J</div><div className="working-card"><span className="pulse" /> Transcribing your voice…</div></div>}
       </div>}
@@ -221,10 +223,10 @@ function ChatPage({ messages, busy, backendReady, onSend, onNew, onVoiceSend }: 
         <div className="composer-bottom">
           <span>Enter to send · Voice recording is processed for transcription</span>
           <div className="composer-actions">
-            <button type="button" className={recording ? "mic-button recording" : "mic-button"} disabled={busy || transcribing} onClick={() => recording ? stopRecording() : void startRecording()} aria-label={recording ? "Stop recording" : "Start voice conversation"}>
+            <button type="button" className={recording ? "mic-button recording" : "mic-button"} disabled={busy || transcribing || loadingConversation} onClick={() => recording ? stopRecording() : void startRecording()} aria-label={recording ? "Stop recording" : "Start voice conversation"}>
               {recording ? "■ Stop" : transcribing ? "…" : "🎙"}
             </button>
-            <button disabled={busy || transcribing || !draft.trim()} aria-label="Send message">↑</button>
+            <button disabled={busy || transcribing || loadingConversation || !draft.trim()} aria-label="Send message">↑</button>
           </div>
         </div>
       </form>
@@ -312,6 +314,8 @@ export default function App() {
   const [health, setHealth] = useState<"unknown" | "online" | "offline">("unknown");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState("");
+  const [conversations, setConversations] = useState<ApiConversation[]>([]);
+  const [loadingConversation, setLoadingConversation] = useState(false);
   const [tasks, setTasks] = useState<ApiTask[]>([]);
   const [memories, setMemories] = useState<ApiMemory[]>([]);
   const [busy, setBusy] = useState(false);
@@ -341,13 +345,39 @@ export default function App() {
     let active = true;
     async function load() {
       try {
-        const [profile, taskResult, memoryResult] = await Promise.all([
+        const [profile, taskResult, memoryResult, conversationResult] = await Promise.all([
           apiRequest<ApiEnvelope<{user:ApiUser}>>(apiBase, "/v1/me", {}, token),
           apiRequest<ApiEnvelope<{tasks:ApiTask[]}>>(apiBase, "/v1/tasks", {}, token),
-          apiRequest<ApiEnvelope<{memories:ApiMemory[]}>>(apiBase, "/v1/memories", {}, token)
+          apiRequest<ApiEnvelope<{memories:ApiMemory[]}>>(apiBase, "/v1/memories", {}, token),
+          apiRequest<ApiEnvelope<{conversations:ApiConversation[]}>>(apiBase, "/v1/conversations", {}, token)
         ]);
         if (!active) return;
-        setUser(profile.user); setTasks(taskResult.tasks || []); setMemories(memoryResult.memories || []);
+        const savedConversations = conversationResult.conversations || [];
+        setUser(profile.user);
+        setTasks(taskResult.tasks || []);
+        setMemories(memoryResult.memories || []);
+        setConversations(savedConversations);
+
+        // Resume the newest saved chat on sign-in so history follows the account across devices.
+        if (!conversationId && savedConversations.length > 0) {
+          const latest = savedConversations[0];
+          const messageResult = await apiRequest<ApiEnvelope<{messages:ApiConversationMessage[]}>>(
+            apiBase,
+            "/v1/conversations/" + encodeURIComponent(latest.id) + "/messages",
+            {},
+            token
+          );
+          if (!active) return;
+          setConversationId(latest.id);
+          setMessages((messageResult.messages || [])
+            .filter(item => item.role === "user" || item.role === "assistant")
+            .map(item => ({
+              id: item.id,
+              role: item.role as "user" | "assistant",
+              content: item.content,
+              time: item.created_at
+            })));
+        }
       } catch (error) {
         if (!active) return;
         setGlobalError(friendlyError(error));
@@ -370,11 +400,42 @@ export default function App() {
 
   async function refreshData() {
     if (!token) return;
-    const [taskResult, memoryResult] = await Promise.all([
+    const [taskResult, memoryResult, conversationResult] = await Promise.all([
       apiRequest<ApiEnvelope<{tasks:ApiTask[]}>>(apiBase, "/v1/tasks", {}, token),
-      apiRequest<ApiEnvelope<{memories:ApiMemory[]}>>(apiBase, "/v1/memories", {}, token)
+      apiRequest<ApiEnvelope<{memories:ApiMemory[]}>>(apiBase, "/v1/memories", {}, token),
+      apiRequest<ApiEnvelope<{conversations:ApiConversation[]}>>(apiBase, "/v1/conversations", {}, token)
     ]);
-    setTasks(taskResult.tasks || []); setMemories(memoryResult.memories || []);
+    setTasks(taskResult.tasks || []);
+    setMemories(memoryResult.memories || []);
+    setConversations(conversationResult.conversations || []);
+  }
+
+  async function openConversation(id: string) {
+    if (busy || loadingConversation || id === conversationId) return;
+    setLoadingConversation(true);
+    setGlobalError("");
+    try {
+      const result = await apiRequest<ApiEnvelope<{messages:ApiConversationMessage[]}>>(
+        apiBase,
+        "/v1/conversations/" + encodeURIComponent(id) + "/messages",
+        {},
+        token
+      );
+      setConversationId(id);
+      setMessages((result.messages || [])
+        .filter(item => item.role === "user" || item.role === "assistant")
+        .map(item => ({
+          id: item.id,
+          role: item.role as "user" | "assistant",
+          content: item.content,
+          time: item.created_at
+        })));
+      setPage("chat");
+    } catch (error) {
+      setGlobalError(friendlyError(error));
+    } finally {
+      setLoadingConversation(false);
+    }
   }
 
   function speakReply(text: string) {
@@ -445,7 +506,7 @@ export default function App() {
   async function logout() {
     try { await apiRequest(apiBase, "/v1/auth/logout", {method:"POST"}, token); } catch { /* local session is still cleared */ }
     window.sessionStorage.removeItem("jarvis.session");
-    setToken(""); setUser(null); setMessages([]); setConversationId(""); setTasks([]); setMemories([]);
+    setToken(""); setUser(null); setMessages([]); setConversationId(""); setConversations([]); setTasks([]); setMemories([]);
   }
 
   if (!token || !user) return <AuthScreen apiBase={apiBase} setApiBase={value => { setApiBase(value); window.localStorage.setItem("jarvis.apiBase", value); }} onAuth={authenticated} />;
@@ -459,11 +520,24 @@ export default function App() {
   return <div className="app-shell">
     <aside className="sidebar"><div className="sidebar-brand"><div className="brand-mark small">J</div><div><div className="brand-name">JARVIS</div><div className="brand-subtitle">PERSONAL AI</div></div></div>
       <div className="nav-label">WORKSPACE</div><nav>{nav.map(([key,icon,label]) => <button key={key} className={page === key ? "nav-item active" : "nav-item"} onClick={() => setPage(key)}><span>{icon}</span>{label}</button>)}</nav>
+      <div className="recent-section">
+        <div className="recent-heading"><span>RECENT CHATS</span><button type="button" onClick={() => {setConversationId("");setMessages([]);setPage("chat");}} aria-label="New chat">＋</button></div>
+        {conversations.length === 0
+          ? <div className="recent-empty">Your saved conversations will appear here.</div>
+          : conversations.slice(0, 8).map(conversation => <button
+              key={conversation.id}
+              type="button"
+              disabled={busy || loadingConversation}
+              className={conversationId === conversation.id ? "recent-chat active" : "recent-chat"}
+              onClick={() => void openConversation(conversation.id)}
+              title={conversation.title}
+            ><span>{conversation.title || "New conversation"}</span></button>)}
+      </div>
       <div className="sidebar-bottom"><button className={page === "settings" ? "nav-item active" : "nav-item"} onClick={() => setPage("settings")}><span>⚙</span>Settings</button><div className="user-mini"><div className="user-avatar">{(user.displayName || user.email).slice(0,1).toUpperCase()}</div><div className="user-details"><b>{user.displayName || "JARVIS user"}</b><span>{user.email}</span></div><button className="logout-icon" onClick={() => void logout()} title="Sign out">↗</button></div></div>
     </aside>
     <main className="main-area"><header className="topbar"><div className="breadcrumb"><b>JARVIS</b><span>/</span>{pageTitle[page]}</div><div className="top-status"><span className={"connection-dot " + health} />{health === "online" ? "Cloud connected" : health === "offline" ? "Backend unavailable" : "Cloud not checked"}<span className="free-badge">FREE CORE</span></div></header>
       {globalError && <div className="global-error">{globalError}<button onClick={() => setGlobalError("")}>Dismiss</button></div>}
-      {page === "chat" && <ChatPage messages={messages} busy={busy} backendReady={health === "online"} onSend={sendMessage} onVoiceSend={sendVoice} onNew={() => {setConversationId("");setMessages([]);}} />}
+      {page === "chat" && <ChatPage messages={messages} busy={busy} loadingConversation={loadingConversation} backendReady={health === "online"} onSend={sendMessage} onVoiceSend={sendVoice} onNew={() => {setConversationId("");setMessages([]);}} />}
       {page === "tasks" && <TasksPage tasks={tasks} />}
       {page === "agents" && <AgentsPage tasks={tasks} />}
       {page === "memory" && <MemoryPage memories={memories} onAdd={addMemory} onDelete={deleteMemory} />}

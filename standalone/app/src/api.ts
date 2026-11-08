@@ -155,3 +155,19 @@ export async function transcribeAudio(
   if (!transcript) throw new ApiError(422, "VOICE_TRANSCRIPT_EMPTY");
   return transcript;
 }
+
+
+export type ApiConversation = {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ApiConversationMessage = {
+  id: string;
+  role: "user" | "assistant" | "agent" | "system";
+  agent_name?: string | null;
+  content: string;
+  created_at: string;
+};
