@@ -2,6 +2,7 @@ import { authenticateRequest, loginAccount, registerAccount, revokeSession } fro
 import { executeCollaborativeChat } from "./agents/orchestrator.js";
 import { saveExplicitMemory } from "./services/memory.js";
 import { normalizeReminderInput, processDueReminders } from "./services/reminders.js";
+import { createApproval, listApprovals, resolveApproval } from "./services/approvals.js";
 
 const ALLOWED_ORIGINS = new Set([
   "http://tauri.localhost", "https://tauri.localhost", "tauri://localhost", "http://localhost:5173"
@@ -204,6 +205,30 @@ async function route(request, env) {
     return json(request, env, { ok: true, messages: result.results || [] });
   }
 
+
+
+  if (method === "GET" && path === "/v1/approvals") {
+    const user = await requireUser(request, env);
+    const approvals = await listApprovals(env.DB, user.id);
+    return json(request, env, { ok: true, approvals });
+  }
+
+  if (method === "POST" && path === "/v1/approvals") {
+    const user = await requireUser(request, env);
+    const approval = await createApproval(env.DB, user.id, await readJson(request));
+    return json(request, env, { ok: true, approval, actionExecuted: false }, 201);
+  }
+
+  const approvalPath = path.split("/");
+  if (method === "POST" && approvalPath.length === 5 &&
+      approvalPath[1] === "v1" && approvalPath[2] === "approvals" &&
+      approvalPath[4] === "decision" && /^[A-Za-z0-9_-]+$/.test(approvalPath[3])) {
+    const user = await requireUser(request, env);
+    const body = await readJson(request);
+    const approval = await resolveApproval(env.DB, user.id, approvalPath[3], body.decision);
+    if (!approval) throw appError("APPROVAL_NOT_FOUND", 404);
+    return json(request, env, { ok: true, approval, actionExecuted: false });
+  }
 
   if (method === "GET" && path === "/v1/reminders") {
     const user = await requireUser(request, env);
