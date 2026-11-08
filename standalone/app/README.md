@@ -9,10 +9,14 @@ Shared React + TypeScript interface wrapped by Tauri 2 for Windows and Android a
 - Account-synced recent conversations; the latest chat resumes after sign-in.
 - Task history and agent activity overview.
 - Explicit memory add/list/delete.
+- One-time reminder scheduling and cancellation, plus a notification inbox.
 - Approval-center placeholder that clearly reports the workflow is not connected yet.
 - Push-to-talk transcription through the standalone Worker and device-native spoken replies.
 
 The API URL can be configured in Settings or through VITE_JARVIS_API_URL. Session tokens currently use sessionStorage in this development prototype; replace this with native secure storage before public release and complete a security review.
+
+## Reminders and notifications
+Reminders are one-time schedules. The app converts the device's local date/time to an ISO UTC value and sends it to the Worker. Cloudflare Cron checks due jobs every minute and creates a persistent inbox entry. The app polls the inbox while open and reloads saved inbox items after sign-in. Native push notifications while the app is closed and recurring reminders are not implemented yet.
 
 ## Web UI validation
 Requires Node.js 22 or later.
