@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   apiRequest, friendlyError, normalizeApiBase, transcribeAudio,
-  type ApiEnvelope, type ApiConversation, type ApiConversationMessage, type ApiMemory, type ApiNotification, type ApiReminder, type ApiSession, type ApiTask, type ApiUser,
+  type ApiEnvelope, type ApiApproval, type ApiConversation, type ApiConversationMessage, type ApiMemory, type ApiNotification, type ApiReminder, type ApiSession, type ApiTask, type ApiUser,
   type AgentStatus, type ChatResponse
 } from "./api";
 
@@ -339,6 +339,97 @@ function RemindersPage({ reminders, notifications, loading, onCreate, onCancel, 
   </section>;
 }
 
+
+function ApprovalsPage({ approvals, onCreate, onDecide }: {
+  approvals: ApiApproval[];
+  onCreate: (input: { actionType: string; summary: string; description: string; target: string }) => Promise<void>;
+  onDecide: (approvalId: string, decision: "approve" | "reject") => Promise<void>;
+}) {
+  const [actionType, setActionType] = useState("custom");
+  const [summary, setSummary] = useState("");
+  const [description, setDescription] = useState("");
+  const [target, setTarget] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const pending = approvals.filter(item => item.status === "pending");
+  const history = approvals.filter(item => item.status !== "pending");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy || !summary.trim() || !description.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      await onCreate({ actionType, summary: summary.trim(), description: description.trim(), target: target.trim() });
+      setSummary("");
+      setDescription("");
+      setTarget("");
+    } catch (cause) {
+      setError(friendlyError(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function decide(approvalId: string, decision: "approve" | "reject") {
+    setBusy(true);
+    setError("");
+    try {
+      await onDecide(approvalId, decision);
+    } catch (cause) {
+      setError(friendlyError(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <section className="content-page">
+    <div className="page-head"><div><div className="eyebrow">PERMISSION CENTER</div><h1>Approvals</h1></div><span className="count">{pending.length} pending</span></div>
+    <div className="approval-banner"><div className="approval-symbol">◇</div><div><h2>Approval is a recorded decision, not an execution.</h2><p>Approving or rejecting a request only records your choice. It does not send messages, change calendars, deploy software, or delete files. The external tool layer is not enabled.</p></div></div>
+
+    <div className="subhead"><div className="eyebrow">REQUEST LIFECYCLE</div><h2>Create an approval request</h2></div>
+    <p className="intro">This form lets you test the request-and-review flow. JARVIS's agents are not yet wired to create requests automatically.</p>
+    <form className="reminder-form" onSubmit={submit}>
+      <label>Action type
+        <select value={actionType} onChange={event => setActionType(event.target.value)}>
+          <option value="custom">Other proposed action</option>
+          <option value="calendar.create_event">Create calendar event</option>
+          <option value="calendar.update_event">Update calendar event</option>
+          <option value="calendar.delete_event">Delete calendar event</option>
+          <option value="email.send">Send email</option>
+          <option value="message.send">Send message</option>
+          <option value="file.delete">Delete file</option>
+          <option value="deployment.publish">Publish deployment</option>
+        </select>
+      </label>
+      <label>What is being proposed?<input value={summary} onChange={event => setSummary(event.target.value)} maxLength={120} required placeholder="Example: Send the project update email" /></label>
+      <label>Exact explanation and preview<textarea rows={3} value={description} onChange={event => setDescription(event.target.value)} maxLength={1200} required placeholder="Describe exactly what would happen, including the content or changes to review." /></label>
+      <label>Recipient, destination, or target (optional)<input value={target} onChange={event => setTarget(event.target.value)} maxLength={200} placeholder="Example: recipient@example.com" /></label>
+      <div className="reminder-form-foot"><span className="reminder-policy">Nothing executes when this request is created or approved.</span><button className="primary-button" disabled={busy || !summary.trim() || !description.trim()}>{busy ? "Saving…" : "＋ Create request"}</button></div>
+      {error && <div className="error">{error}</div>}
+    </form>
+
+    <div className="subhead"><div className="eyebrow">AWAITING YOUR DECISION</div><h2>Pending requests</h2></div>
+    {pending.length === 0 ? <div className="empty"><h3>No pending requests</h3><p>When a request is created, its full description will appear here for review.</p></div> :
+      <div className="stack">{pending.map(item => <article className="data-card approval-card" key={item.id}>
+        <div className="data-top"><span className="status waiting_for_approval">{pretty(item.action_type)}</span><time>{localDateTimeLabel(item.created_at)}</time></div>
+        <h3>{item.summary}</h3>
+        <p className="reminder-note">{item.description}</p>
+        {item.target && <p className="approval-target">Target: {item.target}</p>}
+        {Object.keys(item.details || {}).length > 0 && <pre className="approval-details">{JSON.stringify(item.details, null, 2)}</pre>}
+        <div className="approval-actions"><button className="primary-button" type="button" disabled={busy} onClick={() => void decide(item.id, "approve")}>Record approval</button><button className="danger-button" type="button" disabled={busy} onClick={() => void decide(item.id, "reject")}>Reject request</button></div>
+      </article>)}</div>}
+
+    <div className="subhead"><div className="eyebrow">DECISION HISTORY</div><h2>Resolved requests</h2></div>
+    {history.length === 0 ? <div className="empty"><h3>No decisions recorded</h3><p>Approved and rejected requests will be kept here.</p></div> :
+      <div className="stack">{history.map(item => <article className="data-card approval-card" key={item.id}>
+        <div className="data-top"><span className={"status " + item.status}>{pretty(item.status)}</span><time>{item.resolved_at ? localDateTimeLabel(item.resolved_at) : localDateTimeLabel(item.created_at)}</time></div>
+        <h3>{item.summary}</h3><p className="reminder-note">{item.description}</p>{item.target && <p className="approval-target">Target: {item.target}</p>}
+        <p className="reminder-policy">Decision recorded only. No action was executed.</p>
+      </article>)}</div>}
+  </section>;
+}
+
 function AgentsPage({ tasks }: { tasks: ApiTask[] }) {
   const latest = tasks[0];
   const result = useMemo(() => {
@@ -416,6 +507,7 @@ export default function App() {
   const [memories, setMemories] = useState<ApiMemory[]>([]);
   const [reminders, setReminders] = useState<ApiReminder[]>([]);
   const [notifications, setNotifications] = useState<ApiNotification[]>([]);
+  const [approvals, setApprovals] = useState<ApiApproval[]>([]);
   const [remindersLoading, setRemindersLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [globalError, setGlobalError] = useState("");
@@ -444,13 +536,14 @@ export default function App() {
     let active = true;
     async function load() {
       try {
-        const [profile, taskResult, memoryResult, conversationResult, reminderResult, notificationResult] = await Promise.all([
+        const [profile, taskResult, memoryResult, conversationResult, reminderResult, notificationResult, approvalResult] = await Promise.all([
           apiRequest<ApiEnvelope<{user:ApiUser}>>(apiBase, "/v1/me", {}, token),
           apiRequest<ApiEnvelope<{tasks:ApiTask[]}>>(apiBase, "/v1/tasks", {}, token),
           apiRequest<ApiEnvelope<{memories:ApiMemory[]}>>(apiBase, "/v1/memories", {}, token),
           apiRequest<ApiEnvelope<{conversations:ApiConversation[]}>>(apiBase, "/v1/conversations", {}, token),
           apiRequest<ApiEnvelope<{reminders:ApiReminder[]}>>(apiBase, "/v1/reminders", {}, token),
-          apiRequest<ApiEnvelope<{notifications:ApiNotification[]}>>(apiBase, "/v1/notifications", {}, token)
+          apiRequest<ApiEnvelope<{notifications:ApiNotification[]}>>(apiBase, "/v1/notifications", {}, token),
+          apiRequest<ApiEnvelope<{approvals:ApiApproval[]}>>(apiBase, "/v1/approvals", {}, token)
         ]);
         if (!active) return;
         const savedConversations = conversationResult.conversations || [];
@@ -460,6 +553,7 @@ export default function App() {
         setConversations(savedConversations);
         setReminders(reminderResult.reminders || []);
         setNotifications(notificationResult.notifications || []);
+        setApprovals(approvalResult.approvals || []);
 
         // Resume the newest saved chat on sign-in so history follows the account across devices.
         if (!conversationId && savedConversations.length > 0) {
@@ -524,18 +618,20 @@ export default function App() {
     if (!token) return;
     setRemindersLoading(true);
     try {
-      const [taskResult, memoryResult, conversationResult, reminderResult, notificationResult] = await Promise.all([
+      const [taskResult, memoryResult, conversationResult, reminderResult, notificationResult, approvalResult] = await Promise.all([
         apiRequest<ApiEnvelope<{tasks:ApiTask[]}>>(apiBase, "/v1/tasks", {}, token),
         apiRequest<ApiEnvelope<{memories:ApiMemory[]}>>(apiBase, "/v1/memories", {}, token),
         apiRequest<ApiEnvelope<{conversations:ApiConversation[]}>>(apiBase, "/v1/conversations", {}, token),
         apiRequest<ApiEnvelope<{reminders:ApiReminder[]}>>(apiBase, "/v1/reminders", {}, token),
-        apiRequest<ApiEnvelope<{notifications:ApiNotification[]}>>(apiBase, "/v1/notifications", {}, token)
+        apiRequest<ApiEnvelope<{notifications:ApiNotification[]}>>(apiBase, "/v1/notifications", {}, token),
+        apiRequest<ApiEnvelope<{approvals:ApiApproval[]}>>(apiBase, "/v1/approvals", {}, token)
       ]);
       setTasks(taskResult.tasks || []);
       setMemories(memoryResult.memories || []);
       setConversations(conversationResult.conversations || []);
       setReminders(reminderResult.reminders || []);
       setNotifications(notificationResult.notifications || []);
+      setApprovals(approvalResult.approvals || []);
     } finally {
       setRemindersLoading(false);
     }
@@ -646,6 +742,23 @@ export default function App() {
       : item));
   }
 
+
+  async function createApprovalRequest(input: { actionType: string; summary: string; description: string; target: string }) {
+    await apiRequest<ApiEnvelope<{approval:ApiApproval; actionExecuted:false}>>(apiBase, "/v1/approvals", {
+      method: "POST", body: JSON.stringify(input)
+    }, token);
+    await refreshData();
+  }
+
+  async function decideApprovalRequest(approvalId: string, decision: "approve" | "reject") {
+    const result = await apiRequest<ApiEnvelope<{approval:ApiApproval; actionExecuted:false}>>(
+      apiBase, "/v1/approvals/" + encodeURIComponent(approvalId) + "/decision",
+      { method: "POST", body: JSON.stringify({ decision }) }, token
+    );
+    if (result.actionExecuted !== false) throw new Error("The server did not confirm the non-executing approval policy.");
+    await refreshData();
+  }
+
   async function addMemory(kind: ApiMemory["kind"], content: string) {
     await apiRequest<ApiEnvelope<{memory:ApiMemory}>>(apiBase, "/v1/memories", {
       method: "POST", body: JSON.stringify({kind, content})
@@ -661,7 +774,7 @@ export default function App() {
   async function logout() {
     try { await apiRequest(apiBase, "/v1/auth/logout", {method:"POST"}, token); } catch { /* local session is still cleared */ }
     window.sessionStorage.removeItem("jarvis.session");
-    setToken(""); setUser(null); setMessages([]); setConversationId(""); setConversations([]); setTasks([]); setMemories([]); setReminders([]); setNotifications([]);
+    setToken(""); setUser(null); setMessages([]); setConversationId(""); setConversations([]); setTasks([]); setMemories([]); setReminders([]); setNotifications([]); setApprovals([]);
   }
 
   if (!token || !user) return <AuthScreen apiBase={apiBase} setApiBase={value => { setApiBase(value); window.localStorage.setItem("jarvis.apiBase", value); }} onAuth={authenticated} />;
@@ -697,7 +810,7 @@ export default function App() {
       {page === "agents" && <AgentsPage tasks={tasks} />}
       {page === "memory" && <MemoryPage memories={memories} onAdd={addMemory} onDelete={deleteMemory} />}
       {page === "reminders" && <RemindersPage reminders={reminders} notifications={notifications} loading={remindersLoading} onCreate={createReminder} onCancel={cancelReminder} onMarkRead={markNotificationRead} />}
-      {page === "approvals" && <section className="content-page"><div className="page-head"><div><div className="eyebrow">PERMISSION CENTER</div><h1>Approvals</h1></div><span className="count">Protected</span></div><div className="approval-banner"><div className="approval-symbol">◇</div><div><h2>Nothing acts without its permission layer.</h2><p>Calendar changes, messages, deployments, and file deletion will require explicit approval before their tools are enabled.</p></div></div><div className="empty"><h3>Approval workflow is not connected yet</h3><p>The database has approval records. The interactive approval API and tool execution layer are a later backend milestone.</p></div></section>}
+      {page === "approvals" && <ApprovalsPage approvals={approvals} onCreate={createApprovalRequest} onDecide={decideApprovalRequest} />}
       {page === "settings" && <SettingsPage apiBase={apiBase} onSave={saveApiBase} user={user} onLogout={() => void logout()} health={health} autoSpeak={autoSpeak} onAutoSpeak={updateAutoSpeak} voiceName={voiceName} onVoiceName={updateVoiceName} voices={voices} />}
     </main>
   </div>;

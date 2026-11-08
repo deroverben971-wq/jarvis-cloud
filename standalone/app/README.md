@@ -10,7 +10,7 @@ Shared React + TypeScript interface wrapped by Tauri 2 for Windows and Android a
 - Task history and agent activity overview.
 - Explicit memory add/list/delete.
 - One-time reminder scheduling and cancellation, plus a notification inbox.
-- Approval-center placeholder that clearly reports the workflow is not connected yet.
+- Approval request center with create/list/approve/reject lifecycle; decisions are recorded only and never execute external actions.
 - Push-to-talk transcription through the standalone Worker and device-native spoken replies.
 
 The API URL can be configured in Settings or through VITE_JARVIS_API_URL. Session tokens currently use sessionStorage in this development prototype; replace this with native secure storage before public release and complete a security review.
@@ -58,3 +58,5 @@ Official documentation:
 - https://v2.tauri.app/start/create-project/
 - https://v2.tauri.app/start/prerequisites/
 - https://v2.tauri.app/distribute/android/
+## Approval workflow
+Authenticated clients can create and review approval requests through `/v1/approvals`. Each request includes an allowlisted action type, a short summary, a complete description, and an optional target and structured details. Approve/reject decisions are conditional on the request still being pending and are scoped to the signed-in account. This stage records the decision only: there is no external tool executor, and approval does not send email, modify calendars, deploy, or delete files. JARVIS agent-generated approval requests are a later integration step; the app form currently exists to test the lifecycle.

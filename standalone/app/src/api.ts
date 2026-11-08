@@ -110,7 +110,13 @@ export function friendlyError(error: unknown): string {
     VOICE_DAILY_LIMIT_REACHED: "JARVIS reached its daily free transcription limit. Try again after the daily reset.",
     VOICE_TRANSCRIPTION_FAILED: "JARVIS could not transcribe that recording. Try again or type your message.",
     VOICE_TRANSCRIPT_EMPTY: "No speech was detected. Try again in a quieter place.",
-    CONVERSATION_NOT_FOUND: "That conversation could not be found."
+    CONVERSATION_NOT_FOUND: "That conversation could not be found.",
+    APPROVAL_INPUT_INVALID: "Add a clear summary and description, and check the request details.",
+    APPROVAL_ACTION_TYPE_NOT_ALLOWED: "That action type is not supported by the approval center.",
+    APPROVAL_DETAILS_TOO_LARGE: "The approval details are too large. Shorten the request.",
+    APPROVAL_ALREADY_RESOLVED: "This approval request has already been decided.",
+    APPROVAL_NOT_FOUND: "That approval request could not be found.",
+    TASK_NOT_FOUND: "The linked task could not be found in this account."
   };
   if (error instanceof ApiError && error.status >= 500 && !messages[code]) {
     return "A backend service is unavailable. No paid fallback is enabled.";
@@ -190,4 +196,17 @@ export type ApiNotification = {
   body: string;
   created_at: string;
   read_at?: string | null;
+};
+
+export type ApiApproval = {
+  id: string;
+  task_id?: string | null;
+  action_type: string;
+  summary: string;
+  description: string;
+  target: string;
+  details: Record<string, unknown>;
+  status: "pending" | "approved" | "rejected" | "expired";
+  created_at: string;
+  resolved_at?: string | null;
 };
