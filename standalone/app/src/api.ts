@@ -171,3 +171,23 @@ export type ApiConversationMessage = {
   content: string;
   created_at: string;
 };
+
+
+export type ApiReminder = {
+  id: string;
+  title: string;
+  body: string;
+  run_at: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ApiNotification = {
+  id: string;
+  scheduled_job_id?: string | null;
+  title: string;
+  body: string;
+  created_at: string;
+  read_at?: string | null;
+};

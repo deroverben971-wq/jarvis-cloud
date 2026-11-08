@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   apiRequest, friendlyError, normalizeApiBase, transcribeAudio,
-  type ApiEnvelope, type ApiConversation, type ApiConversationMessage, type ApiMemory, type ApiSession, type ApiTask, type ApiUser,
+  type ApiEnvelope, type ApiConversation, type ApiConversationMessage, type ApiMemory, type ApiNotification, type ApiReminder, type ApiSession, type ApiTask, type ApiUser,
   type AgentStatus, type ChatResponse
 } from "./api";
 
-type Page = "chat" | "tasks" | "agents" | "memory" | "approvals" | "settings";
+type Page = "chat" | "tasks" | "agents" | "memory" | "reminders" | "approvals" | "settings";
 type ChatMessage = { id: string; role: "user" | "assistant"; content: string; time: string; agents?: AgentStatus[] };
 const DEFAULT_API = String(import.meta.env.VITE_JARVIS_API_URL || "");
 const AGENTS = [
@@ -24,6 +24,17 @@ function clock(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
+
+function localDateTimeAfter(minutes: number): string {
+  const date = new Date(Date.now() + minutes * 60 * 1000);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000).toISOString().slice(0, 16);
+}
+
+function localDateTimeLabel(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Invalid date" : date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+}
+
 function pretty(value: string) {
   return value.replaceAll("_", " ");
 }
@@ -243,6 +254,91 @@ function TasksPage({ tasks }: { tasks: ApiTask[] }) {
   </section>;
 }
 
+function RemindersPage({ reminders, notifications, loading, onCreate, onCancel, onMarkRead }: {
+  reminders: ApiReminder[];
+  notifications: ApiNotification[];
+  loading: boolean;
+  onCreate: (title: string, body: string, runAt: string) => Promise<void>;
+  onCancel: (id: string) => Promise<void>;
+  onMarkRead: (id: string) => Promise<void>;
+}) {
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [runAt, setRunAt] = useState(() => localDateTimeAfter(60));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!title.trim() || !runAt || busy) return;
+    const parsed = new Date(runAt);
+    if (Number.isNaN(parsed.getTime())) {
+      setError("Choose a valid date and time.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await onCreate(title.trim(), body.trim(), parsed.toISOString());
+      setTitle("");
+      setBody("");
+      setRunAt(localDateTimeAfter(60));
+    } catch (cause) {
+      setError(friendlyError(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const unread = notifications.filter(item => !item.read_at).length;
+  const upcoming = reminders.filter(item => item.status === "scheduled" || item.status === "running");
+  const completed = reminders.filter(item => item.status !== "scheduled" && item.status !== "running");
+
+  return <section className="content-page">
+    <div className="page-head"><div><div className="eyebrow">PROACTIVE ASSISTANT</div><h1>Reminders & inbox</h1></div><span className="count">{unread} unread</span></div>
+    <p className="intro">Create one-time reminders. Cloudflare checks due schedules every minute and puts them in your account inbox. The inbox refreshes while JARVIS is open; phone push alerts while the app is closed are not connected yet.</p>
+
+    <form className="reminder-form" onSubmit={submit}>
+      <div className="eyebrow">NEW REMINDER</div>
+      <label>What should JARVIS remind you about?<input value={title} onChange={event => setTitle(event.target.value)} maxLength={120} required placeholder="Example: Review the project plan" /></label>
+      <label>Additional note <textarea rows={2} value={body} onChange={event => setBody(event.target.value)} maxLength={500} placeholder="Optional details…" /></label>
+      <div className="reminder-form-foot">
+        <label>When <input type="datetime-local" value={runAt} onChange={event => setRunAt(event.target.value)} required /></label>
+        <button className="primary-button" disabled={busy || !title.trim() || !runAt}>{busy ? "Scheduling…" : "＋ Schedule reminder"}</button>
+      </div>
+      {error && <div className="error">{error}</div>}
+      <div className="reminder-policy">One-time reminders only · 30 seconds to 365 days ahead · Device local time is converted to UTC.</div>
+    </form>
+
+    <div className="subhead"><div className="eyebrow">SCHEDULE</div><h2>Upcoming reminders</h2></div>
+    {loading ? <div className="empty">Loading reminders…</div> : upcoming.length === 0 ? <div className="empty"><h3>No upcoming reminders</h3><p>Create a reminder above. It will appear here until it becomes due or you cancel it.</p></div> :
+      <div className="stack">{upcoming.map(item => <article className="data-card reminder-card" key={item.id}>
+        <div className="data-top"><span className={"status " + item.status}>{pretty(item.status)}</span><time>{localDateTimeLabel(item.run_at)}</time></div>
+        <h3>{item.title}</h3>
+        {item.body && <p className="reminder-note">{item.body}</p>}
+        <div className="data-foot"><code>{item.id.slice(0, 8)}</code><button className="text-danger" type="button" onClick={() => void onCancel(item.id)}>Cancel reminder</button></div>
+      </article>)}</div>}
+
+    {completed.length > 0 && <>
+      <div className="subhead"><div className="eyebrow">HISTORY</div><h2>Previous reminders</h2></div>
+      <div className="stack">{completed.slice(0, 20).map(item => <article className="data-card reminder-card" key={item.id}>
+        <div className="data-top"><span className={"status " + item.status}>{pretty(item.status)}</span><time>{localDateTimeLabel(item.run_at)}</time></div>
+        <h3>{item.title}</h3>
+        {item.body && <p className="reminder-note">{item.body}</p>}
+      </article>)}</div>
+    </>}
+
+    <div className="subhead"><div><div className="eyebrow">DELIVERED BY THE SCHEDULER</div><h2>Notification inbox</h2></div><span className="count">{notifications.length} total</span></div>
+    {notifications.length === 0 ? <div className="empty"><h3>Your inbox is empty</h3><p>When a reminder becomes due, its notification will appear here.</p></div> :
+      <div className="stack">{notifications.map(item => <article className={item.read_at ? "data-card notification-card read" : "data-card notification-card"} key={item.id}>
+        <div className="data-top"><span className={item.read_at ? "status" : "status completed"}>{item.read_at ? "read" : "new"}</span><time>{localDateTimeLabel(item.created_at)}</time></div>
+        <h3>{item.title}</h3>
+        {item.body && <p className="reminder-note">{item.body}</p>}
+        {!item.read_at && <div className="data-foot"><span /><button type="button" className="text-button" onClick={() => void onMarkRead(item.id)}>Mark as read</button></div>}
+      </article>)}</div>}
+  </section>;
+}
+
 function AgentsPage({ tasks }: { tasks: ApiTask[] }) {
   const latest = tasks[0];
   const result = useMemo(() => {
@@ -318,6 +414,9 @@ export default function App() {
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [tasks, setTasks] = useState<ApiTask[]>([]);
   const [memories, setMemories] = useState<ApiMemory[]>([]);
+  const [reminders, setReminders] = useState<ApiReminder[]>([]);
+  const [notifications, setNotifications] = useState<ApiNotification[]>([]);
+  const [remindersLoading, setRemindersLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [globalError, setGlobalError] = useState("");
   const [autoSpeak, setAutoSpeak] = useState(() => window.localStorage.getItem("jarvis.autoSpeak") !== "false");
@@ -345,11 +444,13 @@ export default function App() {
     let active = true;
     async function load() {
       try {
-        const [profile, taskResult, memoryResult, conversationResult] = await Promise.all([
+        const [profile, taskResult, memoryResult, conversationResult, reminderResult, notificationResult] = await Promise.all([
           apiRequest<ApiEnvelope<{user:ApiUser}>>(apiBase, "/v1/me", {}, token),
           apiRequest<ApiEnvelope<{tasks:ApiTask[]}>>(apiBase, "/v1/tasks", {}, token),
           apiRequest<ApiEnvelope<{memories:ApiMemory[]}>>(apiBase, "/v1/memories", {}, token),
-          apiRequest<ApiEnvelope<{conversations:ApiConversation[]}>>(apiBase, "/v1/conversations", {}, token)
+          apiRequest<ApiEnvelope<{conversations:ApiConversation[]}>>(apiBase, "/v1/conversations", {}, token),
+          apiRequest<ApiEnvelope<{reminders:ApiReminder[]}>>(apiBase, "/v1/reminders", {}, token),
+          apiRequest<ApiEnvelope<{notifications:ApiNotification[]}>>(apiBase, "/v1/notifications", {}, token)
         ]);
         if (!active) return;
         const savedConversations = conversationResult.conversations || [];
@@ -357,6 +458,8 @@ export default function App() {
         setTasks(taskResult.tasks || []);
         setMemories(memoryResult.memories || []);
         setConversations(savedConversations);
+        setReminders(reminderResult.reminders || []);
+        setNotifications(notificationResult.notifications || []);
 
         // Resume the newest saved chat on sign-in so history follows the account across devices.
         if (!conversationId && savedConversations.length > 0) {
@@ -388,6 +491,25 @@ export default function App() {
     return () => { active = false; };
   }, [apiBase, token]);
 
+  useEffect(() => {
+    if (!token || !apiBase) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const result = await apiRequest<ApiEnvelope<{notifications:ApiNotification[]}>>(apiBase, "/v1/notifications", {}, token);
+        if (active) setNotifications(result.notifications || []);
+      } catch {
+        // Keep the last inbox snapshot; the main API actions show connection errors.
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 60000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [apiBase, token]);
+
   function authenticated(session: ApiSession) {
     window.sessionStorage.setItem("jarvis.session", session.token);
     setToken(session.token); setUser(session.user); setGlobalError("");
@@ -400,14 +522,23 @@ export default function App() {
 
   async function refreshData() {
     if (!token) return;
-    const [taskResult, memoryResult, conversationResult] = await Promise.all([
-      apiRequest<ApiEnvelope<{tasks:ApiTask[]}>>(apiBase, "/v1/tasks", {}, token),
-      apiRequest<ApiEnvelope<{memories:ApiMemory[]}>>(apiBase, "/v1/memories", {}, token),
-      apiRequest<ApiEnvelope<{conversations:ApiConversation[]}>>(apiBase, "/v1/conversations", {}, token)
-    ]);
-    setTasks(taskResult.tasks || []);
-    setMemories(memoryResult.memories || []);
-    setConversations(conversationResult.conversations || []);
+    setRemindersLoading(true);
+    try {
+      const [taskResult, memoryResult, conversationResult, reminderResult, notificationResult] = await Promise.all([
+        apiRequest<ApiEnvelope<{tasks:ApiTask[]}>>(apiBase, "/v1/tasks", {}, token),
+        apiRequest<ApiEnvelope<{memories:ApiMemory[]}>>(apiBase, "/v1/memories", {}, token),
+        apiRequest<ApiEnvelope<{conversations:ApiConversation[]}>>(apiBase, "/v1/conversations", {}, token),
+        apiRequest<ApiEnvelope<{reminders:ApiReminder[]}>>(apiBase, "/v1/reminders", {}, token),
+        apiRequest<ApiEnvelope<{notifications:ApiNotification[]}>>(apiBase, "/v1/notifications", {}, token)
+      ]);
+      setTasks(taskResult.tasks || []);
+      setMemories(memoryResult.memories || []);
+      setConversations(conversationResult.conversations || []);
+      setReminders(reminderResult.reminders || []);
+      setNotifications(notificationResult.notifications || []);
+    } finally {
+      setRemindersLoading(false);
+    }
   }
 
   async function openConversation(id: string) {
@@ -491,6 +622,30 @@ export default function App() {
     window.localStorage.setItem("jarvis.voiceName", name);
   }
 
+  async function createReminder(title: string, body: string, runAt: string) {
+    await apiRequest<ApiEnvelope<{reminder:ApiReminder}>>(apiBase, "/v1/reminders", {
+      method: "POST",
+      body: JSON.stringify({ title, body, runAt })
+    }, token);
+    await refreshData();
+  }
+
+  async function cancelReminder(reminderId: string) {
+    await apiRequest<ApiEnvelope<Record<string,never>>>(apiBase, "/v1/reminders/" + encodeURIComponent(reminderId), {
+      method: "DELETE"
+    }, token);
+    await refreshData();
+  }
+
+  async function markNotificationRead(notificationId: string) {
+    await apiRequest<ApiEnvelope<Record<string,never>>>(apiBase, "/v1/notifications/" + encodeURIComponent(notificationId) + "/read", {
+      method: "POST"
+    }, token);
+    setNotifications(current => current.map(item => item.id === notificationId
+      ? { ...item, read_at: item.read_at || new Date().toISOString() }
+      : item));
+  }
+
   async function addMemory(kind: ApiMemory["kind"], content: string) {
     await apiRequest<ApiEnvelope<{memory:ApiMemory}>>(apiBase, "/v1/memories", {
       method: "POST", body: JSON.stringify({kind, content})
@@ -506,16 +661,16 @@ export default function App() {
   async function logout() {
     try { await apiRequest(apiBase, "/v1/auth/logout", {method:"POST"}, token); } catch { /* local session is still cleared */ }
     window.sessionStorage.removeItem("jarvis.session");
-    setToken(""); setUser(null); setMessages([]); setConversationId(""); setConversations([]); setTasks([]); setMemories([]);
+    setToken(""); setUser(null); setMessages([]); setConversationId(""); setConversations([]); setTasks([]); setMemories([]); setReminders([]); setNotifications([]);
   }
 
   if (!token || !user) return <AuthScreen apiBase={apiBase} setApiBase={value => { setApiBase(value); window.localStorage.setItem("jarvis.apiBase", value); }} onAuth={authenticated} />;
 
   const nav: Array<[Page,string,string]> = [
     ["chat","◉","Conversation"],["tasks","▤","Tasks & goals"],["agents","⌘","Agent activity"],
-    ["memory","⌁","Memory"],["approvals","◇","Approvals"]
+    ["memory","⌁","Memory"],["reminders","◷","Reminders"],["approvals","◇","Approvals"]
   ];
-  const pageTitle: Record<Page,string> = {chat:"Conversation",tasks:"Tasks & goals",agents:"Agent activity",memory:"Memory",approvals:"Approvals",settings:"Settings"};
+  const pageTitle: Record<Page,string> = {chat:"Conversation",tasks:"Tasks & goals",agents:"Agent activity",memory:"Memory",reminders:"Reminders & inbox",approvals:"Approvals",settings:"Settings"};
 
   return <div className="app-shell">
     <aside className="sidebar"><div className="sidebar-brand"><div className="brand-mark small">J</div><div><div className="brand-name">JARVIS</div><div className="brand-subtitle">PERSONAL AI</div></div></div>
@@ -541,6 +696,7 @@ export default function App() {
       {page === "tasks" && <TasksPage tasks={tasks} />}
       {page === "agents" && <AgentsPage tasks={tasks} />}
       {page === "memory" && <MemoryPage memories={memories} onAdd={addMemory} onDelete={deleteMemory} />}
+      {page === "reminders" && <RemindersPage reminders={reminders} notifications={notifications} loading={remindersLoading} onCreate={createReminder} onCancel={cancelReminder} onMarkRead={markNotificationRead} />}
       {page === "approvals" && <section className="content-page"><div className="page-head"><div><div className="eyebrow">PERMISSION CENTER</div><h1>Approvals</h1></div><span className="count">Protected</span></div><div className="approval-banner"><div className="approval-symbol">◇</div><div><h2>Nothing acts without its permission layer.</h2><p>Calendar changes, messages, deployments, and file deletion will require explicit approval before their tools are enabled.</p></div></div><div className="empty"><h3>Approval workflow is not connected yet</h3><p>The database has approval records. The interactive approval API and tool execution layer are a later backend milestone.</p></div></section>}
       {page === "settings" && <SettingsPage apiBase={apiBase} onSave={saveApiBase} user={user} onLogout={() => void logout()} health={health} autoSpeak={autoSpeak} onAutoSpeak={updateAutoSpeak} voiceName={voiceName} onVoiceName={updateVoiceName} voices={voices} />}
     </main>
