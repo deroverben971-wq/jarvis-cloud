@@ -1,0 +1,14 @@
+{
+  "name": "jarvis-standalone-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "dev": "npx wrangler dev",
+    "deploy": "npx wrangler deploy",
+    "db:migrate:local": "npx wrangler d1 migrations apply jarvis-standalone-db --local",
+    "db:migrate:remote": "npx wrangler d1 migrations apply jarvis-standalone-db --remote",
+    "deploy:check": "node scripts/deployment-readiness.mjs"
+  }
+}
