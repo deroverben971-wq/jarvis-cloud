@@ -1,6 +1,7 @@
 import { authenticateRequest, loginAccount, registerAccount, revokeSession } from "./auth.js";
 import { executeCollaborativeChat } from "./agents/orchestrator.js";
 import { saveExplicitMemory } from "./services/memory.js";
+import { normalizeReminderInput, processDueReminders } from "./services/reminders.js";
 
 const ALLOWED_ORIGINS = new Set([
   "http://tauri.localhost", "https://tauri.localhost", "tauri://localhost", "http://localhost:5173"
@@ -203,6 +204,71 @@ async function route(request, env) {
     return json(request, env, { ok: true, messages: result.results || [] });
   }
 
+
+  if (method === "GET" && path === "/v1/reminders") {
+    const user = await requireUser(request, env);
+    const result = await env.DB.prepare(
+      "SELECT id, payload_json, run_at, status, created_at, updated_at FROM scheduled_jobs " +
+      "WHERE user_id = ? AND job_type = 'reminder' ORDER BY run_at ASC LIMIT 100"
+    ).bind(user.id).all();
+    const reminders = (result.results || []).map((row) => {
+      let payload = {};
+      try { payload = JSON.parse(row.payload_json || "{}"); } catch { /* Ignore malformed legacy payloads. */ }
+      return { id: row.id, title: String(payload.title || "Reminder"), body: String(payload.body || ""), run_at: row.run_at, status: row.status, created_at: row.created_at, updated_at: row.updated_at };
+    });
+    return json(request, env, { ok: true, reminders });
+  }
+
+  if (method === "POST" && path === "/v1/reminders") {
+    const user = await requireUser(request, env);
+    const body = await readJson(request);
+    let reminder;
+    try {
+      reminder = normalizeReminderInput(body);
+    } catch (error) {
+      throw appError(error.code || "REMINDER_INPUT_INVALID", 400);
+    }
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    await env.DB.prepare(
+      "INSERT INTO scheduled_jobs (id, user_id, job_type, payload_json, run_at, status, created_at, updated_at) " +
+      "VALUES (?, ?, 'reminder', ?, ?, 'scheduled', ?, ?)"
+    ).bind(id, user.id, JSON.stringify({ title: reminder.title, body: reminder.body }), reminder.runAt, now, now).run();
+    return json(request, env, { ok: true, reminder: { id, title: reminder.title, body: reminder.body, run_at: reminder.runAt, status: "scheduled", created_at: now, updated_at: now } }, 201);
+  }
+
+  const reminderMatch = path.match(/^\/v1\/reminders\/([A-Za-z0-9_-]+)$/);
+  if (method === "DELETE" && reminderMatch) {
+    const user = await requireUser(request, env);
+    const result = await env.DB.prepare(
+      "UPDATE scheduled_jobs SET status = 'cancelled', updated_at = ? " +
+      "WHERE id = ? AND user_id = ? AND job_type = 'reminder' AND status = 'scheduled'"
+    ).bind(new Date().toISOString(), reminderMatch[1], user.id).run();
+    if (!result.meta?.changes) throw appError("REMINDER_NOT_FOUND_OR_ALREADY_DUE", 404);
+    return json(request, env, { ok: true });
+  }
+
+  if (method === "GET" && path === "/v1/notifications") {
+    const user = await requireUser(request, env);
+    const unreadOnly = url.searchParams.get("unread") === "1";
+    const result = await env.DB.prepare(
+      "SELECT id, scheduled_job_id, title, body, created_at, read_at FROM notifications " +
+      "WHERE user_id = ? " + (unreadOnly ? "AND read_at IS NULL " : "") +
+      "ORDER BY created_at DESC LIMIT 100"
+    ).bind(user.id).all();
+    return json(request, env, { ok: true, notifications: result.results || [] });
+  }
+
+  const notificationReadMatch = path.match(/^\/v1\/notifications\/([A-Za-z0-9_-]+)\/read$/);
+  if (method === "POST" && notificationReadMatch) {
+    const user = await requireUser(request, env);
+    const result = await env.DB.prepare(
+      "UPDATE notifications SET read_at = COALESCE(read_at, ?) WHERE id = ? AND user_id = ?"
+    ).bind(new Date().toISOString(), notificationReadMatch[1], user.id).run();
+    if (!result.meta?.changes) throw appError("NOTIFICATION_NOT_FOUND", 404);
+    return json(request, env, { ok: true });
+  }
+
   if (method === "GET" && path === "/v1/tasks") {
     const user = await requireUser(request, env);
     const result = await env.DB.prepare(
@@ -244,6 +310,12 @@ async function route(request, env) {
 }
 
 export default {
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(processDueReminders(env).catch((error) => {
+      console.error("JARVIS reminder cron failed:", error?.code || "CRON_FAILED");
+    }));
+  },
+
   async fetch(request, env) {
     try {
       return await route(request, env);

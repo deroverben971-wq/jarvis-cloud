@@ -3,6 +3,7 @@
   "name": "jarvis-standalone-api",
   "main": "src/index.js",
   "compatibility_date": "2026-11-07",
+  "triggers": { "crons": ["* * * * *"] },
   "ai": { "binding": "AI" },
   "d1_databases": [
     {
