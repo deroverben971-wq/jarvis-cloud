@@ -69,6 +69,7 @@ test("due reminders produce one idempotent inbox notification batch", async () =
       return {
         bind() {
           return {
+            sql,
             run: async () => ({ meta: { changes: 1 } }),
             all: async () => ({ results: sql.includes("RETURNING id, user_id") ? [dueJob] : [] })
           };
