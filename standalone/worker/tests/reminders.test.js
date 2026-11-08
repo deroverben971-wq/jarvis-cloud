@@ -87,9 +87,26 @@ test("due reminders produce one idempotent inbox notification batch", async () =
   assert.equal(batches.length, 1);
   assert.ok(batches[0][0].sql.includes("ON CONFLICT(scheduled_job_id) DO NOTHING"));
   assert.ok(batches[0][1].sql.includes("status = 'completed'"));
+  const claimSql = prepared.find(sql => sql.includes("RETURNING id, user_id, job_type"));
+  assert.match(claimSql, /job_type = 'reminder'/);
   assert.ok(prepared.some(sql => sql.includes("status = 'running'")));
 });
 
 test("missing D1 binding safely skips scheduled processing", async () => {
   assert.equal(await processDueReminders({}, new Date(NOW)), 0);
+});
+
+
+test("reminder processor does not claim unrelated scheduled job types", async () => {
+  const prepared = [];
+  const db = {
+    prepare(sql) {
+      prepared.push(sql);
+      return { bind() { return { run: async () => ({ meta: { changes: 0 } }), all: async () => ({ results: [] }) }; } };
+    }
+  };
+  await processDueReminders({ DB: db }, new Date(NOW));
+  const claimSql = prepared.find(sql => sql.includes("RETURNING id, user_id, job_type"));
+  assert.ok(claimSql);
+  assert.match(claimSql, /job_type = 'reminder'/);
 });

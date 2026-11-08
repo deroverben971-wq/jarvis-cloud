@@ -48,7 +48,7 @@ export async function processDueReminders(env, now = new Date()) {
 
   const claimed = await env.DB.prepare(
     "UPDATE scheduled_jobs SET status = 'running', updated_at = ? " +
-    "WHERE id IN (SELECT id FROM scheduled_jobs WHERE status = 'scheduled' AND run_at <= ? " +
+    "WHERE id IN (SELECT id FROM scheduled_jobs WHERE status = 'scheduled' AND job_type = 'reminder' AND run_at <= ? " +
     "ORDER BY run_at ASC LIMIT ?) AND status = 'scheduled' " +
     "RETURNING id, user_id, job_type, payload_json, run_at"
   ).bind(nowIso, nowIso, CLAIM_BATCH_SIZE).all();
