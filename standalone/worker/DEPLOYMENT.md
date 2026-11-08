@@ -4,6 +4,8 @@ This project is deliberately NOT deployed yet. The standalone Worker is separate
 
 ## Safety and free-only requirements
 
+- On the Workers Free plan, current D1 limits include up to 10 databases, 500 MB per database, 5 GB total account storage, 5 million rows read/day and 100,000 rows written/day. Free-tier daily query-limit overruns cause D1 queries to fail until the daily reset; do not upgrade or enable billing to work around a limit.
+
 - Keep the Cloudflare account on its free plan. Do not add a paid plan, enable paid billing, or accept an upgrade prompt. Stop if Cloudflare requires payment for a step.
 - The code has an application-level AI call cap and an allowlist of two model IDs, and it has no paid API fallback. Those safeguards do not control the Cloudflare account's plan or guarantee provider quota availability.
 - Create the D1 database and deploy the Worker only when you have reviewed the target account and are ready to make those external changes.
@@ -12,9 +14,14 @@ This project is deliberately NOT deployed yet. The standalone Worker is separate
 
 ## 1. Local preflight
 
-From a PowerShell terminal, open the standalone Worker folder:
+From PowerShell, get the current feature branch and open the standalone Worker folder. If you do not already have the repository locally:
 
-    cd path\to\jarvis-cloud\standalone\worker
+    cd $HOME
+    git clone --branch feature/standalone-multi-agent-core https://github.com/deroverben971-wq/jarvis-cloud.git
+    cd .\jarvis-cloud\standalone\worker
+
+Then run:
+
     npm install
     npm test
     npm run deploy:check
@@ -25,17 +32,21 @@ The preflight checks the Worker name and entry point, AI binding, D1 ID, migrati
 
 Install Node.js 22 or later, then authenticate Wrangler from this terminal:
 
-    npx wrangler login
+    npx wrangler@4 login
 
 Use the intended Cloudflare account. Before creating anything, check the Cloudflare dashboard and confirm the account is still on the free plan.
 
 ## 3. Create and bind the standalone D1 database
 
-Only when explicitly ready to create the remote resource:
+First check whether the separate database already exists in the selected Cloudflare account:
 
-    npx wrangler d1 create jarvis-standalone-db
+    npx wrangler@4 d1 list
 
-The command prints a database ID. Copy that ID into the existing database_id field in wrangler.jsonc. Do not replace the old Telegram Worker or its D1 bindings.
+If jarvis-standalone-db is already listed, do not create a duplicate; use that database's UUID. If it is not listed, create the standalone database in the Asia-Pacific location hint:
+
+    npx wrangler@4 d1 create jarvis-standalone-db --location apac
+
+This command creates a remote D1 resource. The location is a hint, not a guaranteed region. Copy the resulting database UUID into the existing database_id field in wrangler.jsonc. The DB binding already exists in this file, so do not add a second binding or let the CLI create a duplicate one. Do not replace the old Telegram Worker or its D1 bindings.
 
 Run the local preflight again:
 
